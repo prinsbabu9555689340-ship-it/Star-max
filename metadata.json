@@ -1,0 +1,6 @@
+{
+  "name": "Star Max",
+  "description": "Mobile-first social media app for sharing photos, stories, short videos (Reels), and real-time messaging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

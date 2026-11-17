@@ -1,0 +1,289 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Private user preferences, notification settings, and daily usage metadata",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "themeMode": { "type": "string", "enum": ["system", "dark", "light"] },
+        "isPrivate": { "type": "boolean" },
+        "notifyLikes": { "type": "boolean" },
+        "notifyComments": { "type": "boolean" },
+        "notifyFollowers": { "type": "boolean" },
+        "notifyMessages": { "type": "boolean" },
+        "dailyUsageSeconds": { "type": "integer" },
+        "usageDate": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["userId", "themeMode", "createdAt", "updatedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public creator profile for Star Max",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "usernameLower": { "type": "string" },
+        "fullName": { "type": "string" },
+        "bio": { "type": "string" },
+        "website": { "type": "string" },
+        "avatarData": { "type": "string" },
+        "avatarTint": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public"] },
+        "isPrivate": { "type": "boolean" },
+        "postsCount": { "type": "integer" },
+        "followersCount": { "type": "integer" },
+        "followingCount": { "type": "integer" },
+        "verified": { "type": "boolean" },
+        "online": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "username", "usernameLower", "fullName", "bio", "website", "visibility", "postsCount", "followersCount", "followingCount", "verified", "online", "createdAt", "updatedAt"]
+    },
+    "Post": {
+      "title": "Post",
+      "description": "Photo or short video post in Feed and Explore",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "caption": { "type": "string" },
+        "location": { "type": "string" },
+        "hashtags": { "type": "array" },
+        "taggedUsers": { "type": "array" },
+        "mediaType": { "type": "string", "enum": ["photo", "video"] },
+        "mediaData": { "type": "string" },
+        "videoUri": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public", "archived"] },
+        "likesCount": { "type": "integer" },
+        "commentsCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "authorUsername", "authorName", "caption", "hashtags", "taggedUsers", "mediaType", "mediaData", "visibility", "likesCount", "commentsCount", "createdAt", "updatedAt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Comment on a post or reel",
+      "type": "object",
+      "properties": {
+        "postId": { "type": "string" },
+        "userId": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "text": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["postId", "userId", "authorUsername", "text", "visibility", "createdAt"]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "24-hour disappearing photo or text story",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["photo", "text"] },
+        "mediaData": { "type": "string" },
+        "textContent": { "type": "string" },
+        "bgGradient": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public"] },
+        "expiresAtMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "authorUsername", "mediaType", "visibility", "expiresAtMillis", "createdAt"]
+    },
+    "Reel": {
+      "title": "Reel",
+      "description": "Short vertical video reel",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "caption": { "type": "string" },
+        "audioTitle": { "type": "string" },
+        "videoUri": { "type": "string" },
+        "thumbnailData": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public"] },
+        "likesCount": { "type": "integer" },
+        "commentsCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "authorUsername", "caption", "audioTitle", "videoUri", "visibility", "likesCount", "commentsCount", "createdAt", "updatedAt"]
+    },
+    "UserLike": {
+      "title": "UserLike",
+      "description": "User's liked post or reel record",
+      "type": "object",
+      "properties": {
+        "targetId": { "type": "string" },
+        "targetType": { "type": "string", "enum": ["post", "reel"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["targetId", "targetType", "createdAt"]
+    },
+    "SavedPost": {
+      "title": "SavedPost",
+      "description": "User's bookmarked post record",
+      "type": "object",
+      "properties": {
+        "postId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["postId", "createdAt"]
+    },
+    "FollowRelation": {
+      "title": "FollowRelation",
+      "description": "User's followed creator record",
+      "type": "object",
+      "properties": {
+        "targetUserId": { "type": "string" },
+        "targetUsername": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["targetUserId", "targetUsername", "createdAt"]
+    },
+    "FollowRequest": {
+      "title": "FollowRequest",
+      "description": "Pending incoming follow request for a private account",
+      "type": "object",
+      "properties": {
+        "requesterId": { "type": "string" },
+        "requesterUsername": { "type": "string" },
+        "requesterName": { "type": "string" },
+        "requesterAvatar": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["requesterId", "requesterUsername", "requesterName", "createdAt"]
+    },
+    "SentFollowRequest": {
+      "title": "SentFollowRequest",
+      "description": "Outgoing pending follow request tracked by requester",
+      "type": "object",
+      "properties": {
+        "targetUserId": { "type": "string" },
+        "targetUsername": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["targetUserId", "targetUsername", "createdAt"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "Activity notification for likes, comments, follows, and follow requests",
+      "type": "object",
+      "properties": {
+        "notifType": { "type": "string", "enum": ["like", "comment", "follow", "follow_request"] },
+        "actorId": { "type": "string" },
+        "actorUsername": { "type": "string" },
+        "actorAvatar": { "type": "string" },
+        "targetId": { "type": "string" },
+        "previewText": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["notifType", "actorId", "actorUsername", "previewText", "read", "createdAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Direct messaging conversation between two users",
+      "type": "object",
+      "properties": {
+        "participantUids": { "type": "array" },
+        "userAId": { "type": "string" },
+        "userAUsername": { "type": "string" },
+        "userAAvatar": { "type": "string" },
+        "userBId": { "type": "string" },
+        "userBUsername": { "type": "string" },
+        "userBAvatar": { "type": "string" },
+        "lastMessage": { "type": "string" },
+        "lastSenderId": { "type": "string" },
+        "unreadBy": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participantUids", "userAId", "userAUsername", "userBId", "userBUsername", "lastMessage", "lastSenderId", "unreadBy", "createdAt", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Real-time direct message inside a conversation",
+      "type": "object",
+      "properties": {
+        "convId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "text": { "type": "string" },
+        "seenBy": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["convId", "senderId", "participantUids", "text", "seenBy", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Private user preferences"
+    },
+    "/profiles/{profileId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public creator profiles"
+    },
+    "/posts/{postId}": {
+      "schema": { "$ref": "#/entities/Post" },
+      "description": "Public photo and video posts"
+    },
+    "/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Comments on posts and reels"
+    },
+    "/stories/{storyId}": {
+      "schema": { "$ref": "#/entities/Story" },
+      "description": "24-hour disappearing stories"
+    },
+    "/reels/{reelId}": {
+      "schema": { "$ref": "#/entities/Reel" },
+      "description": "Short vertical video reels"
+    },
+    "/users/{userId}/likes/{targetId}": {
+      "schema": { "$ref": "#/entities/UserLike" },
+      "description": "User liked posts and reels"
+    },
+    "/users/{userId}/saved/{postId}": {
+      "schema": { "$ref": "#/entities/SavedPost" },
+      "description": "User saved/bookmarked posts"
+    },
+    "/users/{userId}/following/{targetUserId}": {
+      "schema": { "$ref": "#/entities/FollowRelation" },
+      "description": "User follow relationships"
+    },
+    "/users/{userId}/followRequests/{requesterId}": {
+      "schema": { "$ref": "#/entities/FollowRequest" },
+      "description": "Incoming follow requests for private accounts"
+    },
+    "/users/{userId}/sentFollowRequests/{targetUserId}": {
+      "schema": { "$ref": "#/entities/SentFollowRequest" },
+      "description": "Outgoing pending follow requests"
+    },
+    "/users/{userId}/notifications/{notifId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "User activity notifications"
+    },
+    "/conversations/{convId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Direct messaging conversations"
+    },
+    "/conversations/{convId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Direct messages within a conversation"
+    }
+  }
+}
