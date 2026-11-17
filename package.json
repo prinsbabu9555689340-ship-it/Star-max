@@ -1,0 +1,10 @@
+{
+  "name": "star-max-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Placeholder web page for the Star Max Android app, deployed on Netlify.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-web.mjs"
+  }
+}
