@@ -900,71 +900,147 @@ fun LocalAccountShell(
                                         onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
                                         onSaveToggle = { toggleSavePost(it) },
                                         onArchiveToggle = { post ->
+                                        verificationStatus = "pending",
+                                        fullName = fullName,
+                                        category = category,
+                                        knownAs = knownAs,
+                                        link = link,
+                                        idProofData = idProofData
+                                    )
+                                    toastMessage = "Verification request submitted for @${myProfile.username}!"
+                                    onDone()
+                                },
+                                onUpdateAppPassword = { newPwd, onResult ->
+                                    val res = sessionManager.updateLocalPassword(currentUserId, newPwd)
+                                    if (res.isSuccess) {
+                                        toastMessage = "Password updated"
+                                    }
+                                    onResult(res)
+                                },
+                                onLikeToggle = { toggleLikePost(it) },
+                                onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
+                                onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
+                                onSaveToggle = { toggleSavePost(it) },
+                                onToggleArchivePost = { post ->
+                                    if (post.id.startsWith("sample_")) {
+                                        toastMessage = "Sample posts cannot be archived"
+                                    } else if (post in archivedPosts) {
+                                        archivedPosts = archivedPosts - post
+                                        posts = listOf(post.copy(visibility = "public")) + posts
+                                        localStore.saveCustomPosts(posts + archivedPosts)
+                                        toastMessage = "Post restored to profile"
+                                    } else {
+                                        posts = posts - post
+                                        archivedPosts = listOf(post.copy(visibility = "archived")) + archivedPosts
+                                        localStore.saveCustomPosts(posts + archivedPosts)
+                                        toastMessage = "Post archived"
+                                    }
+                                },
+                                onFollowToggle = { uid ->
+                                    allProfiles.firstOrNull { it.userId == uid }?.let { toggleFollowProfile(it) }
+                                },
+                                onApproveFollowRequest = { req ->
+                                    followRequests = followRequests.filterNot { it.requesterId == req.requesterId }
+                                    myProfile = myProfile.copy(followersCount = myProfile.followersCount + 1L)
+                                },
+                                onDeclineFollowRequest = { reqId ->
+                                    followRequests = followRequests.filterNot { it.requesterId == reqId }
+                                },
+                                onShowMessage = { toastMessage = it },
+                                onSignOut = onSignOut,
+                                onSignOutAll = onSignOutAll
+                            )
+                        }
+
+                        is LocalOverlay.UserDetail -> {
+                            val target = allProfiles.firstOrNull { it.userId == currentOverlay.userId }
+                                ?: UserProfile(userId = currentOverlay.userId, username = "creator", fullName = "Star Max Creator")
+                            ProfileScreen(
+                                profile = target,
+                                isOwnProfile = target.userId == currentUserId,
+                                posts = posts,
+                                savedIds = savedIds,
+                                likedIds = likedIds,
+                                followingIds = followingIds,
+                                sentFollowRequestIds = sentFollowRequestIds,
+                                verifiedUserIds = verifiedUserIds,
+                                themeMode = localThemeMode,
+                                onCycleTheme = { cycleTheme() },
+                                onSaveProfileEdits = { u, f, b, w, a -> saveEditedProfile(u, f, b, w, a) },
+                                onFollowToggle = { toggleFollowProfile(it) },
+                                onMessageUser = { peer -> overlay = LocalOverlay.ChatThread(peer) },
+                                onLikeToggle = { toggleLikePost(it) },
+                                onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
+                                onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
+                                onSaveToggle = { toggleSavePost(it) },
+                                onArchiveToggle = {},
+                                onOpenSettingsAndActivity = { overlay = LocalOverlay.SettingsAndActivity },
+                                savedAccounts = syncedSavedAccounts,
+                                onSwitchAccount = onSwitchAccount,
+                                onAddAccount = onAddAccount,
+                                onBack = { overlay = LocalOverlay.None }
+                            )
+                        }
+
+                        is LocalOverlay.None -> {
+                            when (selectedTab) {
+                                LocalTab.HOME -> {
+                                    HomeFeedScreen(
+                                        currentUserId = currentUserId,
+                                        currentUserProfile = myProfile,
+                                        postsState = UiState.Success(posts),
+                                        storiesState = UiState.Success(stories),
+                                        profiles = allProfiles,
+                                        likedIds = likedIds,
+                                        savedIds = savedIds,
+                                        followingIds = followingIds,
+                                        unreadNotifications = unreadNotifications,
+                                        unreadMessages = unreadMessages,
+                                        themeMode = localThemeMode,
+                                        onCycleTheme = { cycleTheme() },
+                                        onOpenNotifications = { overlay = LocalOverlay.Notifications },
+                                        onOpenMessages = { overlay = LocalOverlay.DmInbox },
+                                        onOpenCreateStory = {
+                                            createInitialMode = CreateContentMode.STORY
+                                            selectedTab = LocalTab.CREATE
+                                        },
+                                        onOpenStory = { list, idx -> activeStoryViewer = list to idx },
+                                        onLikeToggle = { toggleLikePost(it) },
+                                        onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
+                                        onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
+                                        onSaveToggle = { toggleSavePost(it) },
+                                        onOpenProfile = { uid ->
+                                            if (uid == currentUserId) selectedTab = LocalTab.PROFILE
+                                            else overlay = LocalOverlay.UserDetail(uid)
+                                        },
+                                        onFollowToggle = { toggleFollowProfile(it) },
+                                        onHashtagClick = { tag ->
+                                            exploreInitialQuery = "#$tag"
+                                            selectedTab = LocalTab.EXPLORE
+                                        },
+                                        onArchiveToggle = { post ->
                                             if (!post.id.startsWith("sample_")) {
                                                 posts = posts - post
                                                 archivedPosts = listOf(post.copy(visibility = "archived")) + archivedPosts
                                                 localStore.saveCustomPosts(posts + archivedPosts)
                                                 toastMessage = "Post archived"
                                             }
-                                        },
-                                        onOpenSettingsAndActivity = { overlay = LocalOverlay.SettingsAndActivity },
-                                        savedAccounts = syncedSavedAccounts,
-                                        onSwitchAccount = onSwitchAccount,
-                                        onAddAccount = onAddAccount
+                                        }
                                     )
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
-    activeCommentTarget?.let { (targetId, _, _) ->
-        val comments = commentsMap[targetId].orEmpty()
-        CommentsBottomSheet(
-            comments = comments,
-            verifiedUserIds = verifiedUserIds,
-            onDismiss = { activeCommentTarget = null },
-            onSubmitComment = { text ->
-                val trimmed = text.trim()
-                if (trimmed.isNotEmpty()) {
-                    val newComment = Comment(
-                        id = UUID.randomUUID().toString(),
-                        postId = targetId,
-                        userId = currentUserId,
-                        authorUsername = myProfile.username,
-                        authorAvatar = myProfile.avatarData,
-                        text = trimmed,
-                        visibility = "public",
-                        createdAt = Timestamp.now()
-                    )
-                    commentsMap[targetId] = commentsMap[targetId].orEmpty() + newComment
-                    userComments = listOf(newComment) + userComments
-                    localStore.addComment(newComment)
-                }
-            }
-        )
-    }
-
-    activeStoryViewer?.let { (storyList, startIndex) ->
-        StoryViewerDialog(
-            stories = storyList,
-            initialIndex = startIndex,
-            onDismiss = { activeStoryViewer = null },
-            onSendReply = { story, replyText ->
-                val peer = allProfiles.firstOrNull { it.userId == story.userId }
-                    ?: UserProfile(
-                        userId = story.userId,
-                        username = story.authorUsername,
-                        fullName = story.authorUsername,
-                        avatarData = story.authorAvatar
-                    )
-                sendLocalDm(peer, "Replied to your story: $replyText")
-                toastMessage = "Reply sent to @${peer.username}"
-                activeStoryViewer = null
-            }
-        )
-    }
-}
+                                LocalTab.EXPLORE -> {
+                                    ExploreScreen(
+                                        currentUserId = currentUserId,
+                                        searchQuery = exploreInitialQuery,
+                                        searchedUsersState = UiState.Success(allProfiles),
+                                        onSearchQueryChange = { exploreInitialQuery = it },
+                                        profiles = allProfiles,
+                                        posts = posts,
+                                        likedIds = likedIds,
+                                        savedIds = savedIds,
+                                        followingIds = followingIds,
+                                        onFollowToggle = { toggleFollowProfile(it) },
+                                        onOpenProfile = { uid ->
+                                            if (uid == currentUserId) selectedTab = LocalTab.PROFILE
+                                            else overlay = LocalOverlay.UserDetail(uid)
