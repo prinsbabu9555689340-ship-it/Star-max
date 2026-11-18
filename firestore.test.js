@@ -488,6 +488,58 @@ test("Phone-verified profile badge, unique username/phone registries, and anti-s
       createdAt: now,
     })
   );
+
+  // Non-phone Bob can create an unverified profile, submit a private Verification Request,
+  // and toggle his own Developer Verification flag, while Alice cannot read/tamper with Bob's data.
+  await assertSucceeds(
+    nonPhoneBobDb.collection("users").doc(BOB_UID).set({
+      userId: BOB_UID,
+      themeMode: "system",
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+  await assertSucceeds(
+    nonPhoneBobDb.collection("profiles").doc(BOB_UID).set({
+      userId: BOB_UID,
+      username: "bob_creator",
+      usernameLower: "bob_creator",
+      fullName: "Bob Creator",
+      bio: "",
+      website: "",
+      visibility: "public",
+      postsCount: 0,
+      followersCount: 0,
+      followingCount: 0,
+      verified: false,
+      online: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+  await assertSucceeds(
+    nonPhoneBobDb.collection("users").doc(BOB_UID).update({
+      verificationStatus: "pending",
+      verificationFullName: "Bob Creator",
+      verificationCategory: "Creator",
+      verificationKnownAs: "BobbyLens",
+      verificationLink: "https://bobcreator.studio",
+      verificationIdProofData: "data:image/jpeg;base64,AAAA",
+      verificationSubmittedAtMillis: Date.now(),
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+  await assertFails(phoneAliceDb.collection("users").doc(BOB_UID).get());
+  await assertSucceeds(
+    nonPhoneBobDb.collection("profiles").doc(BOB_UID).update({
+      verified: true,
+      updatedAt: new Date(Date.now() - 250),
+    })
+  );
+  await assertFails(
+    phoneAliceDb.collection("profiles").doc(BOB_UID).update({
+      verified: false,
+      updatedAt: new Date(Date.now() - 100),
+    })
+  );
 });
-
-

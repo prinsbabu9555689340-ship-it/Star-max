@@ -325,12 +325,15 @@ fun HomeFeedScreen(
                                 fullName = post.authorName,
                                 avatarData = post.authorAvatar
                             )
+                        val isVerified = authorProfile.verified ||
+                            (post.userId == currentUserId && currentUserProfile?.verified == true)
                         PostCard(
                             post = post,
                             isLiked = post.id in likedIds,
                             isSaved = post.id in savedIds,
                             isFollowingAuthor = post.userId in followingIds,
                             isOwnPost = post.userId == currentUserId,
+                            isAuthorVerified = isVerified,
                             onLikeToggle = { onLikeToggle(post) },
                             onDoubleTapLike = { onDoubleTapLike(post) },
                             onCommentClick = { onOpenComments(post) },

@@ -59,6 +59,7 @@ import com.example.data.model.UserProfile
 import com.example.ui.components.PostCard
 import com.example.ui.components.StarMaxMediaImage
 import com.example.ui.components.UserAvatar
+import com.example.ui.components.VerifiedBadge
 import com.example.ui.theme.LocalStarMaxColors
 
 @Composable
@@ -210,12 +211,7 @@ fun ExploreScreen(
                                 )
                                 if (user.verified) {
                                     Spacer(modifier = Modifier.width(3.dp))
-                                    Icon(
-                                        imageVector = Icons.Filled.Verified,
-                                        contentDescription = null,
-                                        tint = LocalStarMaxColors.current.verifiedBlue,
-                                        modifier = Modifier.size(13.dp)
-                                    )
+                                    VerifiedBadge(size = 13.dp)
                                 }
                             }
                             Text(
@@ -360,6 +356,7 @@ fun ExploreScreen(
                             isSaved = latest.id in savedIds,
                             isFollowingAuthor = latest.userId in followingIds,
                             isOwnPost = latest.userId == currentUserId,
+                            isAuthorVerified = authorProfile.verified,
                             onLikeToggle = { onLikeToggle(latest) },
                             onDoubleTapLike = { onDoubleTapLike(latest) },
                             onCommentClick = { onOpenComments(latest) },

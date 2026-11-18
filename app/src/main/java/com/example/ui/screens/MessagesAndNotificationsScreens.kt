@@ -62,6 +62,7 @@ import com.example.data.model.NotificationItem
 import com.example.data.model.UiState
 import com.example.data.model.UserProfile
 import com.example.ui.components.UserAvatar
+import com.example.ui.components.VerifiedBadge
 import com.example.ui.components.formatRelativeTime
 import com.example.ui.theme.LocalStarMaxColors
 
@@ -69,6 +70,7 @@ import com.example.ui.theme.LocalStarMaxColors
 @Composable
 fun NotificationsScreen(
     notificationsState: UiState<List<NotificationItem>>,
+    verifiedUserIds: Set<String> = emptySet(),
     onMarkRead: (String) -> Unit,
     onOpenProfile: (String) -> Unit,
     onBack: () -> Unit
@@ -161,8 +163,21 @@ fun NotificationsScreen(
 
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = notif.actorUsername,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (notif.actorId in verifiedUserIds) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    VerifiedBadge(size = 13.dp)
+                                }
+                            }
                             Text(
-                                text = "${notif.actorUsername} ${notif.previewText}",
+                                text = notif.previewText,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = if (!notif.read) FontWeight.SemiBold else FontWeight.Normal
                             )
@@ -268,12 +283,22 @@ fun DmInboxScreen(
                                 showOnlineBadge = friend.online
                             )
                             Spacer(modifier = Modifier.height(5.dp))
-                            Text(
-                                text = friend.username,
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = friend.username,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                if (friend.verified) {
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    VerifiedBadge(size = 11.dp)
+                                }
+                            }
                         }
                     }
                 }
@@ -330,11 +355,20 @@ fun DmInboxScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = peerUsername,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = if (isUnread) FontWeight.Bold else FontWeight.SemiBold
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = peerUsername,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = if (isUnread) FontWeight.Bold else FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (peerProfile.verified) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        VerifiedBadge(size = 14.dp)
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = conv.lastMessage,
@@ -407,10 +441,19 @@ fun ChatThreadScreen(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
-                            Text(
-                                text = peerProfile.username,
-                                style = MaterialTheme.typography.titleMedium
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = peerProfile.username,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                if (peerProfile.verified) {
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    VerifiedBadge(size = 15.dp)
+                                }
+                            }
                             Text(
                                 text = if (peerProfile.online) "Active now" else "Offline",
                                 style = MaterialTheme.typography.labelSmall,
@@ -460,7 +503,13 @@ fun ChatThreadScreen(
                                 showOnlineBadge = peerProfile.online
                             )
                             Spacer(modifier = Modifier.height(10.dp))
-                            Text(peerProfile.fullName, style = MaterialTheme.typography.titleMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(peerProfile.fullName, style = MaterialTheme.typography.titleMedium)
+                                if (peerProfile.verified) {
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    VerifiedBadge(size = 15.dp)
+                                }
+                            }
                             Text(
                                 text = "@${peerProfile.username} • Star Max",
                                 style = MaterialTheme.typography.bodySmall,

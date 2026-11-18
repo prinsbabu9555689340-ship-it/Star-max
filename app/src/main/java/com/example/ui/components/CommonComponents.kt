@@ -241,12 +241,27 @@ fun UserAvatar(
 }
 
 @Composable
+fun VerifiedBadge(
+    modifier: Modifier = Modifier,
+    size: Dp = 14.dp,
+    contentDescription: String = "Verified"
+) {
+    Icon(
+        imageVector = Icons.Filled.Verified,
+        contentDescription = contentDescription,
+        tint = LocalStarMaxColors.current.verifiedBlue,
+        modifier = modifier.size(size)
+    )
+}
+
+@Composable
 fun PostCard(
     post: Post,
     isLiked: Boolean,
     isSaved: Boolean,
     isFollowingAuthor: Boolean,
     isOwnPost: Boolean,
+    isAuthorVerified: Boolean = post.userId.startsWith("sample_") && post.userId != "sample_elena",
     onLikeToggle: () -> Unit,
     onDoubleTapLike: () -> Unit,
     onCommentClick: () -> Unit,
@@ -308,13 +323,11 @@ fun PostCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (post.userId.startsWith("sample_")) {
+                    if (isAuthorVerified) {
                         Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Filled.Verified,
-                            contentDescription = "Verified creator",
-                            tint = extended.verifiedBlue,
-                            modifier = Modifier.size(14.dp)
+                        VerifiedBadge(
+                            size = 14.dp,
+                            contentDescription = "Verified creator"
                         )
                     }
                 }
@@ -594,6 +607,7 @@ fun PostCard(
 @Composable
 fun CommentsBottomSheet(
     comments: List<Comment>,
+    verifiedUserIds: Set<String> = emptySet(),
     onDismiss: () -> Unit,
     onSubmitComment: (String) -> Unit
 ) {
@@ -660,6 +674,10 @@ fun CommentsBottomSheet(
                                         text = comment.authorUsername,
                                         style = MaterialTheme.typography.titleSmall
                                     )
+                                    if (comment.userId in verifiedUserIds) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        VerifiedBadge(size = 13.dp)
+                                    }
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = formatRelativeTime(comment.createdAt),

@@ -70,6 +70,7 @@ import com.example.data.model.Reel
 import com.example.data.model.UserProfile
 import com.example.ui.components.StarMaxMediaImage
 import com.example.ui.components.UserAvatar
+import com.example.ui.components.VerifiedBadge
 import com.example.ui.components.formatCompactCount
 import com.example.ui.theme.LocalStarMaxColors
 import kotlinx.coroutines.delay
@@ -129,6 +130,7 @@ fun ReelsScreen(
                 isLiked = reel.id in likedIds,
                 isFollowing = reel.userId in followingIds,
                 isOwnReel = reel.userId == currentUserId,
+                isAuthorVerified = authorProfile.verified,
                 isPlayingPage = isPageActive,
                 isMuted = isMuted,
                 onToggleMute = { isMuted = !isMuted },
@@ -194,6 +196,7 @@ private fun ReelPage(
     isLiked: Boolean,
     isFollowing: Boolean,
     isOwnReel: Boolean,
+    isAuthorVerified: Boolean,
     isPlayingPage: Boolean,
     isMuted: Boolean,
     onToggleMute: () -> Unit,
@@ -424,6 +427,10 @@ private fun ReelPage(
                     color = Color.White,
                     modifier = Modifier.clickable(onClick = onAuthorClick)
                 )
+                if (isAuthorVerified) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    VerifiedBadge(size = 15.dp)
+                }
                 if (!isOwnReel) {
                     Spacer(modifier = Modifier.width(10.dp))
                     Surface(

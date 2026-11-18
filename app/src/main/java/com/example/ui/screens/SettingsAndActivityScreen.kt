@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -90,12 +91,22 @@ fun SettingsAndActivityScreen(
     likedIds: Set<String>,
     savedIds: Set<String>,
     followingIds: Set<String>,
+    verifiedUserIds: Set<String> = emptySet(),
     onBack: () -> Unit,
     onSetDarkModeEnabled: (Boolean) -> Unit,
     onSetThemeMode: (ThemeMode) -> Unit,
     onSetAccountPrivacy: (Boolean) -> Unit,
     onUpdateNotificationPrefs: (likes: Boolean, comments: Boolean, followers: Boolean, messages: Boolean) -> Unit,
     onSaveProfileEdits: (username: String, fullName: String, bio: String, website: String, avatarData: String?) -> Unit,
+    onSubmitVerificationRequest: (
+        fullName: String,
+        knownAs: String,
+        category: String,
+        link: String,
+        idProofData: String,
+        onDone: () -> Unit
+    ) -> Unit = { _, _, _, _, _, onDone -> onDone() },
+    onSetDeveloperVerified: (Boolean) -> Unit = {},
     onUpdateAppPassword: ((newPassword: String, onResult: (Result<Unit>) -> Unit) -> Unit)? = null,
     onLikeToggle: (Post) -> Unit,
     onDoubleTapLike: (Post) -> Unit,
@@ -122,10 +133,9 @@ fun SettingsAndActivityScreen(
     var showActivityHistory by remember { mutableStateOf(false) }
     var showSavedArchived by remember { mutableStateOf(false) }
     var showEditProfile by remember { mutableStateOf(false) }
+    var showRequestVerification by remember { mutableStateOf(false) }
     var showFollowRequests by remember { mutableStateOf(false) }
     var showChangePassword by remember { mutableStateOf(false) }
-    var showLogoutConfirm by remember { mutableStateOf(false) }
-    var showLogoutAllConfirm by remember { mutableStateOf(false) }
 
     val likedPosts = remember(posts, likedIds) { posts.filter { it.id in likedIds } }
     val savedPosts = remember(posts, savedIds) { posts.filter { it.id in savedIds } }
@@ -265,9 +275,9 @@ fun SettingsAndActivityScreen(
                 }
             }
 
-            // 2. ACCOUNT & PRIVACY SETTINGS SECTION
+            // 2. ACCOUNTS CENTER (Edit Profile & Star Max Verified)
             item {
-                SectionHeading("Account & privacy")
+                SectionHeading("Accounts Center")
             }
 
             item {
@@ -290,6 +300,122 @@ fun SettingsAndActivityScreen(
                             thickness = 0.5.dp,
                             modifier = Modifier.padding(horizontal = 16.dp)
                         )
+
+                        // Star Max Verified (Blue Tick Request Form)
+                        val verificationStatusLabel = if (profile.verified) "Verified" else "Apply"
+                        val verificationSubtitle = if (profile.verified) {
+                            "Blue Tick active across Profile, Feed & Comments"
+                        } else {
+                            "Submit verification form or toggle badge below"
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showRequestVerification = true }
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
+                                .testTag("settings_request_verification_row"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Verified,
+                                contentDescription = "Star Max Verified",
+                                tint = extended.verifiedBlue
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Star Max Verified",
+                                        style = MaterialTheme.typography.titleSmall
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Surface(
+                                        color = if (profile.verified) {
+                                            extended.verifiedBlue.copy(alpha = 0.16f)
+                                        } else {
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                        },
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(
+                                            text = verificationStatusLabel,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (profile.verified) extended.verifiedBlue else MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = verificationSubtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        HorizontalDivider(
+                            color = extended.subtleDivider,
+                            thickness = 0.5.dp,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+
+                        // Instant Star Max Verified Toggle inside Accounts Center
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSetDeveloperVerified(!profile.verified) }
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
+                                .testTag("settings_dev_verified_row"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Verified,
+                                contentDescription = "Toggle Star Max Verified",
+                                tint = if (profile.verified) extended.verifiedBlue else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Blue Tick Verification",
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Text(
+                                    text = if (profile.verified) {
+                                        "ON • Verified badge shown next to @${profile.username}"
+                                    } else {
+                                        "Turn ON to verify @${profile.username} instantly"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Switch(
+                                checked = profile.verified,
+                                onCheckedChange = onSetDeveloperVerified,
+                                modifier = Modifier.testTag("settings_dev_verified_switch")
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 3. PRIVACY & APPEARANCE SETTINGS SECTION
+            item {
+                SectionHeading("Privacy & appearance")
+            }
+
+            item {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column {
 
                         // Account Privacy Toggle
                         Row(
@@ -508,25 +634,27 @@ fun SettingsAndActivityScreen(
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    val securitySubtitle = when {
-                        userPhone.isNotBlank() -> "Verified mobile: $userPhone"
-                        userEmail.isNotBlank() -> "Manage password for $userEmail"
-                        else -> "Password & account security"
+                    Column {
+                        val securitySubtitle = when {
+                            userPhone.isNotBlank() -> "Verified mobile: $userPhone"
+                            userEmail.isNotBlank() -> "Manage password for $userEmail"
+                            else -> "Password & account security"
+                        }
+                        SettingsActionRow(
+                            icon = Icons.Filled.Key,
+                            title = "Change Password",
+                            subtitle = securitySubtitle,
+                            testTag = "settings_change_password_row",
+                            onClick = { showChangePassword = true }
+                        )
                     }
-                    SettingsActionRow(
-                        icon = Icons.Filled.Key,
-                        title = "Change Password",
-                        subtitle = securitySubtitle,
-                        testTag = "settings_change_password_row",
-                        onClick = { showChangePassword = true }
-                    )
                 }
             }
 
             item {
                 Spacer(modifier = Modifier.height(4.dp))
                 Button(
-                    onClick = { showLogoutConfirm = true },
+                    onClick = onSignOut,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                         contentColor = MaterialTheme.colorScheme.onError
@@ -550,7 +678,7 @@ fun SettingsAndActivityScreen(
                 }
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedButton(
-                    onClick = { showLogoutAllConfirm = true },
+                    onClick = onSignOutAll,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                     shape = RoundedCornerShape(14.dp),
@@ -581,6 +709,7 @@ fun SettingsAndActivityScreen(
             likedIds = likedIds,
             savedIds = savedIds,
             followingIds = followingIds,
+            verifiedUserIds = verifiedUserIds,
             onLikeToggle = onLikeToggle,
             onDoubleTapLike = onDoubleTapLike,
             onOpenComments = onOpenComments,
@@ -598,12 +727,24 @@ fun SettingsAndActivityScreen(
             likedIds = likedIds,
             savedIds = savedIds,
             followingIds = followingIds,
+            verifiedUserIds = verifiedUserIds,
             onLikeToggle = onLikeToggle,
             onDoubleTapLike = onDoubleTapLike,
             onOpenComments = onOpenComments,
             onSaveToggle = onSaveToggle,
             onToggleArchivePost = onToggleArchivePost,
             onDismiss = { showSavedArchived = false }
+        )
+    }
+
+    if (showRequestVerification) {
+        RequestVerificationDialog(
+            profile = profile,
+            userSettings = userSettings,
+            userPhone = userPhone,
+            onSubmitRequest = onSubmitVerificationRequest,
+            onToggleDeveloperVerified = onSetDeveloperVerified,
+            onDismiss = { showRequestVerification = false }
         )
     }
 
@@ -635,62 +776,6 @@ fun SettingsAndActivityScreen(
             onUpdateAppPassword = onUpdateAppPassword,
             onShowMessage = onShowMessage,
             onDismiss = { showChangePassword = false }
-        )
-    }
-
-    if (showLogoutConfirm) {
-        AlertDialog(
-            onDismissRequest = { showLogoutConfirm = false },
-            title = {
-                Text(
-                    if (profile.username.isNotBlank()) "Log out of @${profile.username}?" else "Log out of Star Max?"
-                )
-            },
-            text = {
-                Text("Your session on this account will be cleared and you will return to the login screen.")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showLogoutConfirm = false
-                        onSignOut()
-                    },
-                    modifier = Modifier.testTag("confirm_logout_button")
-                ) {
-                    Text("Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLogoutConfirm = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    if (showLogoutAllConfirm) {
-        AlertDialog(
-            onDismissRequest = { showLogoutAllConfirm = false },
-            title = { Text("Log out of all accounts?") },
-            text = {
-                Text("All saved Star Max accounts on this device will be signed out and removed from the account switcher.")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showLogoutAllConfirm = false
-                        onSignOutAll()
-                    },
-                    modifier = Modifier.testTag("confirm_logout_all_button")
-                ) {
-                    Text("Log Out All", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLogoutAllConfirm = false }) {
-                    Text("Cancel")
-                }
-            }
         )
     }
 }

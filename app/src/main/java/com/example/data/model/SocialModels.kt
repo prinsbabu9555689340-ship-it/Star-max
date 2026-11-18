@@ -40,6 +40,13 @@ data class UserSettings(
     val dailyUsageSeconds: Long = 0L,
     val usageDate: String = "",
     val phoneE164: String = "",
+    val verificationStatus: String = "none",
+    val verificationFullName: String = "",
+    val verificationCategory: String = "",
+    val verificationKnownAs: String = "",
+    val verificationLink: String = "",
+    val verificationIdProofData: String = "",
+    val verificationSubmittedAtMillis: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
@@ -50,9 +57,18 @@ data class SavedAccountRecord(
     val slotName: String = "",
     val username: String = "",
     val fullName: String = "",
+    val bio: String = "",
+    val website: String = "",
     val avatarData: String = "",
     val phoneE164: String = "",
     val verified: Boolean = false,
+    val isPrivate: Boolean = false,
+    val verificationStatus: String = "none",
+    val verificationFullName: String = "",
+    val verificationCategory: String = "",
+    val verificationKnownAs: String = "",
+    val verificationLink: String = "",
+    val verificationIdProofData: String = "",
     val authProvider: String = "phone"
 )
 

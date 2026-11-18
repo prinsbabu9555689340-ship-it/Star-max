@@ -159,8 +159,6 @@ fun AccountSwitcherBottomSheet(
                     .height(50.dp)
                     .testTag("account_switcher_add_button")
             ) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
                 Text("+ Add Account", fontWeight = FontWeight.SemiBold)
             }
         }

@@ -87,6 +87,7 @@ import com.example.ui.components.AccountSwitcherBottomSheet
 import com.example.ui.components.PostCard
 import com.example.ui.components.StarMaxMediaImage
 import com.example.ui.components.UserAvatar
+import com.example.ui.components.VerifiedBadge
 import com.example.ui.components.formatCompactCount
 import com.example.ui.theme.LocalStarMaxColors
 import kotlinx.coroutines.launch
@@ -101,6 +102,7 @@ fun ProfileScreen(
     likedIds: Set<String>,
     followingIds: Set<String>,
     sentFollowRequestIds: Set<String> = emptySet(),
+    verifiedUserIds: Set<String> = emptySet(),
     pendingRequestsCount: Int = 0,
     themeMode: ThemeMode,
     onCycleTheme: () -> Unit,
@@ -190,11 +192,9 @@ fun ProfileScreen(
                 )
                 if (profile.verified) {
                     Spacer(modifier = Modifier.width(5.dp))
-                    Icon(
-                        imageVector = Icons.Filled.Verified,
-                        contentDescription = "Verified",
-                        tint = extended.verifiedBlue,
-                        modifier = Modifier.size(18.dp)
+                    VerifiedBadge(
+                        size = 18.dp,
+                        modifier = Modifier.testTag("profile_verified_badge")
                     )
                 }
                 if (isOwnProfile) {
@@ -502,6 +502,7 @@ fun ProfileScreen(
                             isSaved = latest.id in savedIds,
                             isFollowingAuthor = latest.userId in followingIds,
                             isOwnPost = latest.userId == profile.userId && isOwnProfile,
+                            isAuthorVerified = latest.userId in verifiedUserIds || (latest.userId == profile.userId && profile.verified),
                             onLikeToggle = { onLikeToggle(latest) },
                             onDoubleTapLike = { onDoubleTapLike(latest) },
                             onCommentClick = { onOpenComments(latest) },

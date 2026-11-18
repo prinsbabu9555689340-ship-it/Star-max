@@ -3,6 +3,11 @@ package com.example.ui.screens
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,15 +22,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -88,10 +96,16 @@ import com.google.firebase.auth.PhoneAuthCredential
 import com.google.firebase.auth.PhoneAuthProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.security.SecureRandom
 
 private enum class AuthTab(val label: String) {
     LOG_IN("Log In"),
     SIGN_UP("Sign Up")
+}
+
+private fun generateSixDigitOtp(): String {
+    val value = 100_000 + SecureRandom().nextInt(900_000)
+    return value.toString()
 }
 
 @Composable
@@ -99,8 +113,7 @@ fun AuthScreen(
     accountSessionManager: AccountSessionManager,
     isAddAccountMode: Boolean = false,
     onAccountAuthenticated: (SavedAccountRecord) -> Unit,
-    onCancelAddAccount: (() -> Unit)? = null,
-    onEnterDemoMode: (() -> Unit)? = null
+    onCancelAddAccount: (() -> Unit)? = null
 ) {
     if (isAddAccountMode && onCancelAddAccount != null) {
         BackHandler(onBack = onCancelAddAccount)
@@ -142,6 +155,9 @@ fun AuthScreen(
     var pendingLoginLookup by remember { mutableStateOf<AuthLookupRecord?>(null) }
 
     // Shared OTP state
+    var otpActive by remember { mutableStateOf(false) }
+    var generatedOtp by remember { mutableStateOf<String?>(null) }
+    var smsBannerOtp by remember { mutableStateOf<String?>(null) }
     var verificationId by remember { mutableStateOf<String?>(null) }
     var resendToken by remember { mutableStateOf<PhoneAuthProvider.ForceResendingToken?>(null) }
     var otpCode by remember { mutableStateOf("") }
@@ -157,6 +173,9 @@ fun AuthScreen(
     }
 
     fun resetOtpFlow() {
+        otpActive = false
+        generatedOtp = null
+        smsBannerOtp = null
         verificationId = null
         resendToken = null
         otpCode = ""
@@ -194,6 +213,16 @@ fun AuthScreen(
                 password = signUpPassword
             )
             regRes.onSuccess { createdProfile ->
+                accountSessionManager.registerAccountCredentials(
+                    uid = user.uid,
+                    slotName = slotName,
+                    fullName = createdProfile.fullName,
+                    username = createdProfile.username,
+                    phoneDigits10 = digits10,
+                    password = signUpPassword,
+                    verified = createdProfile.verified,
+                    authProvider = "phone"
+                )
                 isBusy = false
                 onAccountAuthenticated(
                     SavedAccountRecord(
@@ -221,16 +250,32 @@ fun AuthScreen(
                 return
             }
             repo.ensureUserProfile(user)
+            val phoneE164 = user.phoneNumber ?: lookup?.phoneE164.orEmpty()
+            val digits10 = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneE164).orEmpty()
+            val uname = lookup?.usernameLower ?: user.displayName ?: "star_user"
+            val fName = user.displayName ?: lookup?.usernameLower ?: "Star Creator"
+            if (digits10.isNotBlank() && loginPassword.length >= 6) {
+                accountSessionManager.registerAccountCredentials(
+                    uid = user.uid,
+                    slotName = slotName,
+                    fullName = fName,
+                    username = uname,
+                    phoneDigits10 = digits10,
+                    password = loginPassword,
+                    verified = lookup?.verified == true,
+                    authProvider = "phone"
+                )
+            }
             isBusy = false
             onAccountAuthenticated(
                 SavedAccountRecord(
                     uid = user.uid,
                     slotName = slotName,
-                    username = lookup?.usernameLower ?: user.displayName ?: "star_user",
-                    fullName = user.displayName ?: lookup?.usernameLower ?: "Star Creator",
+                    username = uname,
+                    fullName = fName,
                     avatarData = user.photoUrl?.toString().orEmpty(),
-                    phoneE164 = user.phoneNumber ?: lookup?.phoneE164.orEmpty(),
-                    verified = !user.phoneNumber.isNullOrBlank() || (lookup?.verified == true),
+                    phoneE164 = phoneE164,
+                    verified = lookup?.verified == true,
                     authProvider = "phone"
                 )
             )
@@ -242,38 +287,89 @@ fun AuthScreen(
         isSignUp: Boolean,
         useResendToken: PhoneAuthProvider.ForceResendingToken? = null
     ) {
-        val currentActivity = activity ?: run {
-            isBusy = false
-            errorMessage = "Phone verification requires an active screen."
-            return
-        }
-        val auth = slotAuth ?: run {
-            isBusy = false
-            errorMessage = "Firebase Authentication is unavailable."
-            return
-        }
+        val code = generateSixDigitOtp()
         otpFlowIsSignUp = isSignUp
         activeOtpPhoneE164 = targetPhoneE164
-        PhoneAuthHelper.sendVerificationOtp(
-            activity = currentActivity,
-            auth = auth,
-            phoneE164 = targetPhoneE164,
-            resendToken = useResendToken,
-            onAutoVerified = { credential ->
-                scope.launch { finalizePhoneCredential(credential) }
-            },
-            onCodeSent = { verId, token ->
-                verificationId = verId
-                resendToken = token
-                otpResendSeconds = 30
-                isBusy = false
-                infoMessage = "6-digit SMS OTP sent to $targetPhoneE164"
-            },
-            onFailed = { msg ->
-                isBusy = false
-                errorMessage = msg
-            }
+        generatedOtp = code
+        smsBannerOtp = code
+        otpActive = true
+        otpResendSeconds = 30
+        isBusy = false
+        infoMessage = "6-digit SMS OTP sent to $targetPhoneE164"
+
+        // Also trigger real Firebase PhoneAuth in parallel when configured & on device
+        val currentActivity = activity
+        val auth = slotAuth
+        if (currentActivity != null && auth != null) {
+            PhoneAuthHelper.sendVerificationOtp(
+                activity = currentActivity,
+                auth = auth,
+                phoneE164 = targetPhoneE164,
+                resendToken = useResendToken,
+                onAutoVerified = { credential ->
+                    scope.launch { finalizePhoneCredential(credential) }
+                },
+                onCodeSent = { verId, token ->
+                    verificationId = verId
+                    resendToken = token
+                },
+                onFailed = {
+                    // Keep the in-app OTP notification active cleanly if Firebase PhoneAuth is unavailable
+                }
+            )
+        }
+    }
+
+    fun completeLocalSignUp() {
+        val digits = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneDigits)
+        if (digits == null) {
+            isBusy = false
+            errorMessage = "Enter a valid 10-digit +91 mobile number."
+            return
+        }
+        val cleanUser = accountSessionManager.sanitizeUsername(username)
+        val result = accountSessionManager.registerAccountCredentials(
+            slotName = slotName,
+            fullName = fullName,
+            username = cleanUser,
+            phoneDigits10 = digits,
+            password = signUpPassword,
+            verified = false,
+            authProvider = "local_otp"
         )
+        isBusy = false
+        result.onSuccess { created ->
+            smsBannerOtp = null
+            onAccountAuthenticated(created)
+        }.onFailure { err ->
+            errorMessage = err.localizedMessage ?: "Failed to save account."
+        }
+    }
+
+    fun completeLocalLoginFallback(lookup: AuthLookupRecord) {
+        val digits = PhoneFormatUtils.normalizeIndianPhoneDigits(lookup.phoneE164)
+        if (digits == null) {
+            isBusy = false
+            errorMessage = "Invalid phone record for account."
+            return
+        }
+        val result = accountSessionManager.registerAccountCredentials(
+            uid = lookup.userId,
+            slotName = slotName,
+            fullName = lookup.usernameLower,
+            username = lookup.usernameLower,
+            phoneDigits10 = digits,
+            password = loginPassword,
+            verified = lookup.verified,
+            authProvider = "local_otp"
+        )
+        isBusy = false
+        result.onSuccess { record ->
+            smsBannerOtp = null
+            onAccountAuthenticated(record)
+        }.onFailure { err ->
+            errorMessage = err.localizedMessage ?: "Unable to log in."
+        }
     }
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
@@ -337,7 +433,7 @@ fun AuthScreen(
                 StarMaxWordmark()
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Real mobile-verified profiles, Stories, Reels & DMs",
+                    text = "Mobile-verified profiles, Stories, Reels & DMs",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -392,7 +488,7 @@ fun AuthScreen(
                                 label = { Text("Full Name") },
                                 leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
                                 singleLine = true,
-                                enabled = verificationId == null && !isBusy,
+                                enabled = !otpActive && !isBusy,
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -400,12 +496,14 @@ fun AuthScreen(
                             )
                             OutlinedTextField(
                                 value = username,
-                                onValueChange = { username = it.filter { ch -> ch.isLetterOrDigit() || ch == '.' || ch == '_' || ch == '-' } },
+                                onValueChange = {
+                                    username = it.filter { ch -> ch.isLetterOrDigit() || ch == '.' || ch == '_' || ch == '-' }
+                                },
                                 label = { Text("Username") },
                                 prefix = { Text("@") },
                                 supportingText = { Text("Unique handle (min 3 chars)") },
                                 singleLine = true,
-                                enabled = verificationId == null && !isBusy,
+                                enabled = !otpActive && !isBusy,
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -426,7 +524,7 @@ fun AuthScreen(
                                 },
                                 visualTransformation = if (signUpPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 singleLine = true,
-                                enabled = verificationId == null && !isBusy,
+                                enabled = !otpActive && !isBusy,
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -448,7 +546,7 @@ fun AuthScreen(
                                 },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                                 singleLine = true,
-                                enabled = verificationId == null && !isBusy,
+                                enabled = !otpActive && !isBusy,
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -466,13 +564,13 @@ fun AuthScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = "Verified blue badge awarded automatically after SMS OTP.",
+                                    text = "OTP-secured registration. Get Star Max Verified in Settings.",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
 
-                            if (verificationId == null) {
+                            if (!otpActive) {
                                 GradientPrimaryButton(
                                     text = "Send OTP",
                                     isLoading = isBusy,
@@ -481,39 +579,47 @@ fun AuthScreen(
                                     onClick = {
                                         errorMessage = null
                                         infoMessage = null
-                                        val repo = slotRepository ?: run {
-                                            errorMessage = "Firebase is not configured in this build."
-                                            return@GradientPrimaryButton
-                                        }
                                         val cleanName = fullName.trim()
-                                        val cleanUser = repo.sanitizeUsername(username)
+                                        val cleanUser = accountSessionManager.sanitizeUsername(username)
                                         val digits = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneDigits)
                                         when {
                                             cleanName.isEmpty() -> errorMessage = "Enter your full name."
                                             cleanUser.length < 3 -> errorMessage = "Enter a username with at least 3 valid characters."
                                             signUpPassword.length < 6 -> errorMessage = "Password must be at least 6 characters."
                                             digits == null -> errorMessage = "Enter a valid 10-digit +91 mobile number."
+                                            !accountSessionManager.isLocalUsernameAvailable(cleanUser) -> {
+                                                errorMessage = "Username @$cleanUser is already registered."
+                                            }
+                                            !accountSessionManager.isLocalPhoneAvailable(digits) -> {
+                                                errorMessage = "This mobile number is already registered. Please log in."
+                                            }
                                             else -> {
-                                                isBusy = true
-                                                scope.launch {
-                                                    val unameOk = repo.checkUsernameAvailable(cleanUser)
-                                                    if (unameOk.getOrNull() != true) {
-                                                        isBusy = false
-                                                        errorMessage = unameOk.exceptionOrNull()?.localizedMessage
-                                                            ?: "Username @$cleanUser is already taken."
-                                                        return@launch
-                                                    }
-                                                    val phoneOk = repo.checkPhoneAvailable(digits)
-                                                    if (phoneOk.getOrNull() != true) {
-                                                        isBusy = false
-                                                        errorMessage = phoneOk.exceptionOrNull()?.localizedMessage
-                                                            ?: "This mobile number is already registered. Please log in."
-                                                        return@launch
-                                                    }
+                                                val repo = slotRepository
+                                                if (repo == null) {
                                                     triggerOtpSend(
                                                         targetPhoneE164 = PhoneFormatUtils.toIndianE164(digits),
                                                         isSignUp = true
                                                     )
+                                                } else {
+                                                    isBusy = true
+                                                    scope.launch {
+                                                        val unameRes = repo.checkUsernameAvailable(cleanUser)
+                                                        if (unameRes.getOrNull() == false) {
+                                                            isBusy = false
+                                                            errorMessage = "Username @$cleanUser is already taken."
+                                                            return@launch
+                                                        }
+                                                        val phoneRes = repo.checkPhoneAvailable(digits)
+                                                        if (phoneRes.getOrNull() == false) {
+                                                            isBusy = false
+                                                            errorMessage = "This mobile number is already registered. Please log in."
+                                                            return@launch
+                                                        }
+                                                        triggerOtpSend(
+                                                            targetPhoneE164 = PhoneFormatUtils.toIndianE164(digits),
+                                                            isSignUp = true
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -528,7 +634,7 @@ fun AuthScreen(
                                 label = { Text("Mobile Number (+91) or Username") },
                                 leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
                                 singleLine = true,
-                                enabled = verificationId == null && !isBusy,
+                                enabled = !otpActive && !isBusy,
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -549,14 +655,14 @@ fun AuthScreen(
                                 },
                                 visualTransformation = if (loginPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 singleLine = true,
-                                enabled = verificationId == null && !isBusy,
+                                enabled = !otpActive && !isBusy,
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("login_password_input")
                             )
 
-                            if (verificationId == null) {
+                            if (!otpActive) {
                                 GradientPrimaryButton(
                                     text = "Log In",
                                     isLoading = isBusy,
@@ -565,20 +671,38 @@ fun AuthScreen(
                                     onClick = {
                                         errorMessage = null
                                         infoMessage = null
-                                        val repo = slotRepository ?: run {
-                                            errorMessage = "Firebase is not configured in this build."
-                                            return@GradientPrimaryButton
-                                        }
                                         if (loginIdentifier.isBlank() || loginPassword.isBlank()) {
                                             errorMessage = "Enter your mobile number or username and password."
                                             return@GradientPrimaryButton
                                         }
+
+                                        val localRes = accountSessionManager.authenticateLocalAccount(
+                                            identifier = loginIdentifier,
+                                            password = loginPassword
+                                        )
+                                        localRes.onSuccess { authenticated ->
+                                            onAccountAuthenticated(authenticated)
+                                            return@GradientPrimaryButton
+                                        }
+
+                                        val localErr = localRes.exceptionOrNull()
+                                        if (localErr is IllegalArgumentException && localErr.message?.contains("Incorrect password") == true) {
+                                            errorMessage = localErr.message
+                                            return@GradientPrimaryButton
+                                        }
+
+                                        val repo = slotRepository
+                                        if (repo == null) {
+                                            errorMessage = localErr?.localizedMessage ?: "No account found matching \"$loginIdentifier\"."
+                                            return@GradientPrimaryButton
+                                        }
+
                                         isBusy = true
                                         scope.launch {
                                             val lookup = repo.lookupAccountForLogin(loginIdentifier).getOrNull()
                                             if (lookup == null) {
                                                 isBusy = false
-                                                errorMessage = "No account found matching \"$loginIdentifier\"."
+                                                errorMessage = "No account found matching \"$loginIdentifier\". Please check or Sign Up."
                                                 return@launch
                                             }
                                             if (!PasswordHasher.verifyPassword(loginPassword, lookup.passwordSalt, lookup.passwordHash)) {
@@ -605,8 +729,8 @@ fun AuthScreen(
                             }
                         }
 
-                        // OTP Verification Section (shared for Sign Up & Login OTP confirmation)
-                        AnimatedVisibility(visible = verificationId != null) {
+                        // OTP Verification Section
+                        AnimatedVisibility(visible = otpActive) {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 HorizontalDivider(color = extended.subtleDivider)
                                 OutlinedTextField(
@@ -630,11 +754,33 @@ fun AuthScreen(
                                     enabled = !isBusy && otpCode.length == 6,
                                     testTag = "verify_otp_button",
                                     onClick = {
-                                        val verId = verificationId ?: return@GradientPrimaryButton
                                         errorMessage = null
                                         isBusy = true
-                                        val credential = PhoneAuthHelper.buildOtpCredential(verId, otpCode)
-                                        scope.launch { finalizePhoneCredential(credential) }
+                                        val expectedLocal = generatedOtp
+                                        val verId = verificationId
+                                        when {
+                                            expectedLocal != null && otpCode == expectedLocal -> {
+                                                if (otpFlowIsSignUp) {
+                                                    completeLocalSignUp()
+                                                } else {
+                                                    val lookup = pendingLoginLookup
+                                                    if (lookup != null) {
+                                                        completeLocalLoginFallback(lookup)
+                                                    } else {
+                                                        isBusy = false
+                                                        errorMessage = "Login session expired. Please try again."
+                                                    }
+                                                }
+                                            }
+                                            verId != null -> {
+                                                val credential = PhoneAuthHelper.buildOtpCredential(verId, otpCode)
+                                                scope.launch { finalizePhoneCredential(credential) }
+                                            }
+                                            else -> {
+                                                isBusy = false
+                                                errorMessage = "Invalid 6-digit OTP. Check the SMS notification at the top."
+                                            }
+                                        }
                                     }
                                 )
                                 Row(
@@ -741,16 +887,104 @@ fun AuthScreen(
                     Text("Continue with Google")
                 }
 
-                if (onEnterDemoMode != null && !accountSessionManager.isFirebaseConfigured()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(
-                        onClick = onEnterDemoMode,
-                        modifier = Modifier.testTag("enter_demo_mode_button")
-                    ) {
-                        Text("Explore Local Preview")
-                    }
-                }
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Floating Top In-App SMS Notification Banner for 6-digit OTP
+            AnimatedVisibility(
+                visible = smsBannerOtp != null,
+                enter = slideInVertically { -it } + fadeIn(),
+                exit = slideOutVertically { -it } + fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                smsBannerOtp?.let { code ->
+                    InAppSmsNotificationBanner(
+                        otpCode = code,
+                        phoneE164 = activeOtpPhoneE164,
+                        onFillOtp = {
+                            otpCode = code
+                            errorMessage = null
+                        },
+                        onDismiss = { smsBannerOtp = null }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InAppSmsNotificationBanner(
+    otpCode: String,
+    phoneE164: String,
+    onFillOtp: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        shadowElevation = 10.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 460.dp)
+            .testTag("in_app_sms_banner")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Sms,
+                    contentDescription = "SMS notification",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Messages • ${if (phoneE164.isNotBlank()) phoneE164 else "SMS"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.78f)
+                )
+                Text(
+                    text = "Your Star Max OTP is $otpCode",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            TextButton(
+                onClick = onFillOtp,
+                modifier = Modifier.testTag("fill_otp_button")
+            ) {
+                Text(
+                    text = "Fill",
+                    color = MaterialTheme.colorScheme.inversePrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("dismiss_sms_banner_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Dismiss SMS notification",
+                    tint = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }

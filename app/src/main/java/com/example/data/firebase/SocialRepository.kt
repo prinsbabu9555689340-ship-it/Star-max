@@ -202,18 +202,21 @@ class SocialRepository(
                         "dailyUsageSeconds" to 0L,
                         "usageDate" to ThemePreferences.todayDateKey(),
                         "phoneE164" to phoneE164,
+                        "verificationStatus" to if (isPhoneVerified) "verified" else "none",
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
             } else {
                 opType = OperationType.UPDATE
-                userDocRef.update(
-                    mapOf(
-                        "phoneE164" to phoneE164,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                val userUpdates = mutableMapOf<String, Any>(
+                    "phoneE164" to phoneE164,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (isPhoneVerified) {
+                    userUpdates["verificationStatus"] = "verified"
+                }
+                userDocRef.update(userUpdates).await()
             }
 
             val profileDocRef = db.collection("profiles").document(uid)
@@ -401,6 +404,7 @@ class SocialRepository(
                     "notifyMessages" to true,
                     "dailyUsageSeconds" to 0L,
                     "usageDate" to ThemePreferences.todayDateKey(),
+                    "verificationStatus" to if (isPhoneVerified) "verified" else "none",
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
@@ -415,6 +419,7 @@ class SocialRepository(
                 userDocRef.update(
                     mapOf(
                         "phoneE164" to user.phoneNumber.orEmpty(),
+                        "verificationStatus" to "verified",
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
@@ -759,6 +764,85 @@ class SocialRepository(
                 mapOf(
                     "usageDate" to usageDate.take(16),
                     "dailyUsageSeconds" to seconds.coerceIn(0L, 864000L),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun submitVerificationRequest(
+        fullName: String,
+        knownAs: String,
+        category: String,
+        link: String,
+        idProofData: String
+    ): Result<String> {
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
+        var path = "profiles/$uid"
+        return try {
+            val currentUid = requireUserId()
+            val cleanFullName = fullName.trim().take(80)
+            require(cleanFullName.isNotEmpty()) { "Full name is required." }
+            val cleanCategory = category.trim().ifBlank { "Creator" }.take(40)
+            val cleanKnownAs = knownAs.trim().take(80)
+            val cleanLink = link.trim().take(200)
+            val cleanProof = idProofData.trim().take(350000)
+            require(cleanProof.isNotBlank() || cleanLink.isNotBlank()) {
+                "Please select an ID proof photo or enter your mobile / social link."
+            }
+
+            path = "profiles/$currentUid"
+            db.collection("profiles").document(currentUid).update(
+                mapOf(
+                    "verified" to true,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+
+            path = "users/$currentUid"
+            db.collection("users").document(currentUid).update(
+                mapOf(
+                    "verificationStatus" to "verified",
+                    "verificationFullName" to cleanFullName,
+                    "verificationCategory" to cleanCategory,
+                    "verificationKnownAs" to cleanKnownAs,
+                    "verificationLink" to cleanLink,
+                    "verificationIdProofData" to cleanProof,
+                    "verificationSubmittedAtMillis" to System.currentTimeMillis(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success("verified")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun setDeveloperVerified(verified: Boolean): Result<Unit> {
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
+        var path = "profiles/$uid"
+        return try {
+            val currentUid = requireUserId()
+            val nextStatus = if (verified) "verified" else "none"
+            db.collection("profiles").document(currentUid).update(
+                mapOf(
+                    "verified" to verified,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            path = "users/$currentUid"
+            db.collection("users").document(currentUid).update(
+                mapOf(
+                    "verificationStatus" to nextStatus,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()

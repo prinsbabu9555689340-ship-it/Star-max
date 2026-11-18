@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.data.firebase.AccountSessionManager
+import com.example.data.firebase.LocalUserStore
 import com.example.data.firebase.ThemePreferences
 import com.example.data.model.ChatMessage
 import com.example.data.model.Comment
@@ -56,6 +58,7 @@ import com.example.data.model.FollowRequest
 import com.example.data.model.Post
 import com.example.data.model.Reel
 import com.example.data.model.SampleData
+import com.example.data.model.SavedAccountRecord
 import com.example.data.model.Story
 import com.example.data.model.ThemeMode
 import com.example.data.model.UiState
@@ -80,7 +83,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-private enum class DemoTab(
+private enum class LocalTab(
     val route: String,
     val label: String,
     val selectedIcon: ImageVector,
@@ -93,49 +96,88 @@ private enum class DemoTab(
     PROFILE("profile", "Profile", Icons.Filled.Person, Icons.Outlined.Person)
 }
 
-private sealed interface DemoOverlay {
-    data object None : DemoOverlay
-    data object Notifications : DemoOverlay
-    data object DmInbox : DemoOverlay
-    data object SettingsAndActivity : DemoOverlay
-    data class ChatThread(val peer: UserProfile) : DemoOverlay
-    data class UserDetail(val userId: String) : DemoOverlay
+private sealed interface LocalOverlay {
+    data object None : LocalOverlay
+    data object Notifications : LocalOverlay
+    data object DmInbox : LocalOverlay
+    data object SettingsAndActivity : LocalOverlay
+    data class ChatThread(val peer: UserProfile) : LocalOverlay
+    data class UserDetail(val userId: String) : LocalOverlay
 }
 
 @Composable
-fun LocalDemoShell(
+fun LocalAccountShell(
+    activeAccount: SavedAccountRecord,
+    savedAccounts: List<SavedAccountRecord>,
+    sessionManager: AccountSessionManager,
+    localStore: LocalUserStore,
     themePreferences: ThemePreferences?,
     currentThemeMode: ThemeMode,
-    canReturnToSignIn: Boolean = false,
     onThemeModeSelected: (ThemeMode) -> Unit = {},
-    onExitDemo: () -> Unit = {}
+    onSwitchAccount: (SavedAccountRecord) -> Unit,
+    onAddAccount: () -> Unit,
+    onSignOut: () -> Unit,
+    onSignOutAll: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
-    val currentUserId = "demo_local_user"
+    val currentUserId = activeAccount.uid
 
-    var myProfile by remember {
+    val initialAllPosts = remember(currentUserId) { localStore.loadAllPosts() }
+    val initialPublicPosts = remember(initialAllPosts, currentUserId) {
+        initialAllPosts.filter { it.visibility != "archived" }
+    }
+    val initialArchivedPosts = remember(initialAllPosts, currentUserId) {
+        initialAllPosts.filter { it.visibility == "archived" && it.userId == currentUserId }
+    }
+    val initialFollowing = remember(currentUserId) {
+        localStore.loadUserSet(currentUserId, "following", setOf("sample_kai", "sample_maya"))
+    }
+    val initialLiked = remember(currentUserId) {
+        localStore.loadUserSet(currentUserId, "liked", setOf("sample_post_1"))
+    }
+    val initialSaved = remember(currentUserId) {
+        localStore.loadUserSet(currentUserId, "saved", setOf("sample_post_2"))
+    }
+
+    var posts by remember(currentUserId) { mutableStateOf(initialPublicPosts) }
+    var archivedPosts by remember(currentUserId) { mutableStateOf(initialArchivedPosts) }
+    var stories by remember(currentUserId) { mutableStateOf(localStore.loadAllStories()) }
+    var reels by remember(currentUserId) { mutableStateOf(localStore.loadAllReels()) }
+    var likedIds by remember(currentUserId) { mutableStateOf(initialLiked) }
+    var savedIds by remember(currentUserId) { mutableStateOf(initialSaved) }
+    var followingIds by remember(currentUserId) { mutableStateOf(initialFollowing) }
+    var sentFollowRequestIds by remember(currentUserId) { mutableStateOf(emptySet<String>()) }
+
+    var myProfile by remember(currentUserId) {
+        val ownPostCount = initialPublicPosts.count { it.userId == currentUserId }.toLong()
         mutableStateOf(
-            UserProfile(
-                id = currentUserId,
-                userId = currentUserId,
-                username = "star_creator",
-                usernameLower = "star_creator",
-                fullName = "Star Max Creator",
-                bio = "Capturing everyday moments on Star Max",
-                website = "https://starmax.app",
-                avatarData = "res:ic_starmax_mark",
-                avatarTint = "#E1306C",
-                postsCount = 0L,
-                followersCount = 128L,
-                followingCount = 2L,
-                online = true
+            LocalUserStore.toUserProfile(
+                record = activeAccount,
+                postsCount = ownPostCount,
+                followingCount = initialFollowing.size.toLong()
             )
         )
     }
 
     var localThemeMode by remember(currentThemeMode) { mutableStateOf(currentThemeMode) }
-    var userSettings by remember { mutableStateOf(UserSettings(userId = currentUserId)) }
+    var userSettings by remember(currentUserId) {
+        mutableStateOf(
+            UserSettings(
+                userId = currentUserId,
+                isPrivate = activeAccount.isPrivate,
+                phoneE164 = activeAccount.phoneE164,
+                verificationStatus = activeAccount.verificationStatus.ifBlank {
+                    if (activeAccount.verified) "verified" else "none"
+                },
+                verificationFullName = activeAccount.verificationFullName,
+                verificationCategory = activeAccount.verificationCategory,
+                verificationKnownAs = activeAccount.verificationKnownAs,
+                verificationLink = activeAccount.verificationLink,
+                verificationIdProofData = activeAccount.verificationIdProofData
+            )
+        )
+    }
     var todayUsageSeconds by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(themePreferences) {
@@ -187,39 +229,33 @@ fun LocalDemoShell(
         }
     }
 
-    var profiles by remember { mutableStateOf(SampleData.sampleProfiles) }
-    var posts by remember { mutableStateOf(SampleData.samplePosts) }
-    var archivedPosts by remember { mutableStateOf(emptyList<Post>()) }
-    var stories by remember { mutableStateOf(SampleData.sampleStories) }
-    var reels by remember { mutableStateOf(SampleData.sampleReels) }
-    var notifications by remember { mutableStateOf(SampleData.sampleNotifications) }
-    var followRequests by remember { mutableStateOf(emptyList<FollowRequest>()) }
+    var notifications by remember(currentUserId) { mutableStateOf(SampleData.sampleNotifications) }
+    var followRequests by remember(currentUserId) { mutableStateOf(emptyList<FollowRequest>()) }
 
-    var likedIds by remember { mutableStateOf(setOf("sample_post_1")) }
-    var savedIds by remember { mutableStateOf(setOf("sample_post_2")) }
-    var followingIds by remember { mutableStateOf(setOf("sample_kai", "sample_maya")) }
-    var sentFollowRequestIds by remember { mutableStateOf(emptySet<String>()) }
-
-    val commentsMap = remember {
+    val commentsMap = remember(currentUserId) {
         mutableStateMapOf<String, List<Comment>>().apply {
-            putAll(SampleData.sampleCommentsByPost)
+            putAll(localStore.loadCommentsMap())
         }
     }
-    var userComments by remember { mutableStateOf(emptyList<Comment>()) }
+    var userComments by remember(currentUserId) {
+        mutableStateOf(
+            commentsMap.values.flatten().filter { it.userId == currentUserId }
+        )
+    }
 
-    var conversations by remember {
+    var conversations by remember(currentUserId) {
         mutableStateOf(
             listOf(
                 Conversation(
-                    id = "dm_demo_kai",
+                    id = "dm_${currentUserId}_sample_kai",
                     participantUids = listOf(currentUserId, "sample_kai"),
                     userAId = currentUserId,
-                    userAUsername = "star_creator",
-                    userAAvatar = "res:ic_starmax_mark",
+                    userAUsername = activeAccount.username,
+                    userAAvatar = activeAccount.avatarData,
                     userBId = "sample_kai",
                     userBUsername = "kai_tokyo",
                     userBAvatar = "res:img_post_neon_tokyo",
-                    lastMessage = "Welcome to Star Max! Loving your shots.",
+                    lastMessage = "Welcome to Star Max, @${activeAccount.username}!",
                     lastSenderId = "sample_kai",
                     unreadBy = listOf(currentUserId),
                     updatedAt = Timestamp.now()
@@ -227,15 +263,15 @@ fun LocalDemoShell(
             )
         )
     }
-    val messagesMap = remember {
+    val messagesMap = remember(currentUserId) {
         mutableStateMapOf(
-            "dm_demo_kai" to listOf(
+            "dm_${currentUserId}_sample_kai" to listOf(
                 ChatMessage(
-                    id = "demo_msg_1",
-                    convId = "dm_demo_kai",
+                    id = "msg_welcome_${currentUserId}",
+                    convId = "dm_${currentUserId}_sample_kai",
                     senderId = "sample_kai",
                     participantUids = listOf(currentUserId, "sample_kai"),
-                    text = "Welcome to Star Max! Loving your shots.",
+                    text = "Welcome to Star Max, @${activeAccount.username}!",
                     seenBy = listOf("sample_kai"),
                     createdAt = Timestamp.now()
                 )
@@ -251,12 +287,12 @@ fun LocalDemoShell(
         }
     }
 
-    var selectedTab by remember { mutableStateOf(DemoTab.HOME) }
-    var overlay by remember { mutableStateOf<DemoOverlay>(DemoOverlay.None) }
-    var exploreInitialQuery by remember { mutableStateOf("") }
-    var createInitialMode by remember { mutableStateOf(CreateContentMode.POST) }
-    var activeCommentTarget by remember { mutableStateOf<Triple<String, String, Boolean>?>(null) }
-    var activeStoryViewer by remember { mutableStateOf<Pair<List<Story>, Int>?>(null) }
+    var selectedTab by remember(currentUserId) { mutableStateOf(LocalTab.HOME) }
+    var overlay by remember(currentUserId) { mutableStateOf<LocalOverlay>(LocalOverlay.None) }
+    var exploreInitialQuery by remember(currentUserId) { mutableStateOf("") }
+    var createInitialMode by remember(currentUserId) { mutableStateOf(CreateContentMode.POST) }
+    var activeCommentTarget by remember(currentUserId) { mutableStateOf<Triple<String, String, Boolean>?>(null) }
+    var activeStoryViewer by remember(currentUserId) { mutableStateOf<Pair<List<Story>, Int>?>(null) }
 
     fun updateTheme(mode: ThemeMode) {
         localThemeMode = mode
@@ -278,11 +314,56 @@ fun LocalDemoShell(
     fun toggleLikePost(post: Post) {
         val wasLiked = post.id in likedIds
         likedIds = if (wasLiked) likedIds - post.id else likedIds + post.id
+        localStore.saveUserSet(currentUserId, "liked", likedIds)
         if (!post.id.startsWith("sample_")) {
             posts = posts.map {
                 if (it.id == post.id) it.copy(likesCount = (it.likesCount + if (wasLiked) -1L else 1L).coerceAtLeast(0L)) else it
             }
+            localStore.saveCustomPosts(posts + archivedPosts)
         }
+    }
+
+    fun toggleSavePost(postId: String) {
+        savedIds = if (postId in savedIds) savedIds - postId else savedIds + postId
+        localStore.saveUserSet(currentUserId, "saved", savedIds)
+    }
+
+    fun toggleFollowProfile(target: UserProfile) {
+        followingIds = if (target.userId in followingIds) followingIds - target.userId else followingIds + target.userId
+        localStore.saveUserSet(currentUserId, "following", followingIds)
+        myProfile = myProfile.copy(followingCount = followingIds.size.toLong())
+    }
+
+    fun saveEditedProfile(u: String, f: String, b: String, w: String, a: String?) {
+        val nextUsername = sessionManager.sanitizeUsername(u).ifBlank { myProfile.username }
+        val nextFull = f.trim().ifBlank { myProfile.fullName }
+        val nextBio = b.trim()
+        val nextWeb = w.trim()
+        val nextAvatar = a ?: myProfile.avatarData
+        myProfile = myProfile.copy(
+            username = nextUsername,
+            usernameLower = nextUsername.lowercase(),
+            fullName = nextFull,
+            bio = nextBio,
+            website = nextWeb,
+            avatarData = nextAvatar
+        )
+        sessionManager.updateAccountProfile(
+            uid = currentUserId,
+            username = nextUsername,
+            fullName = nextFull,
+            avatarData = nextAvatar,
+            verified = myProfile.verified,
+            bio = nextBio,
+            website = nextWeb
+        )
+        localStore.syncAuthorMetadataInPosts(currentUserId, nextUsername, nextFull, nextAvatar)
+        posts = posts.map {
+            if (!it.id.startsWith("sample_") && it.userId == currentUserId) {
+                it.copy(authorUsername = nextUsername, authorName = nextFull, authorAvatar = nextAvatar)
+            } else it
+        }
+        toastMessage = "Profile updated"
     }
 
     fun sendLocalDm(peer: UserProfile, text: String) {
@@ -316,7 +397,30 @@ fun LocalDemoShell(
         conversations = listOf(updatedConv) + conversations.filterNot { it.id == convId }
     }
 
-    val allProfiles = remember(myProfile, profiles) { listOf(myProfile) + profiles }
+    val otherRegisteredProfiles = remember(savedAccounts, myProfile) {
+        sessionManager.getAllRegisteredAccounts()
+            .filter { it.uid != currentUserId }
+            .map { LocalUserStore.toUserProfile(it) }
+    }
+    val allProfiles = remember(myProfile, otherRegisteredProfiles) {
+        (listOf(myProfile) + otherRegisteredProfiles + SampleData.sampleProfiles)
+            .distinctBy { it.userId }
+    }
+    val syncedSavedAccounts = remember(savedAccounts, myProfile) {
+        savedAccounts.map { rec ->
+            if (rec.uid == myProfile.userId) {
+                rec.copy(
+                    username = myProfile.username,
+                    fullName = myProfile.fullName,
+                    avatarData = myProfile.avatarData,
+                    verified = myProfile.verified
+                )
+            } else rec
+        }
+    }
+    val verifiedUserIds = remember(allProfiles) {
+        allProfiles.filter { it.verified }.mapTo(HashSet()) { it.userId }
+    }
     val unreadNotifications = remember(notifications) { notifications.count { !it.read } }
     val unreadMessages = remember(conversations) { conversations.count { currentUserId in it.unreadBy } }
 
@@ -327,19 +431,19 @@ fun LocalDemoShell(
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
-                if (!useRail && overlay is DemoOverlay.None) {
-                    val isReels = selectedTab == DemoTab.REELS
+                if (!useRail && overlay is LocalOverlay.None) {
+                    val isReels = selectedTab == LocalTab.REELS
                     NavigationBar(
                         containerColor = if (isReels) Color.Black else MaterialTheme.colorScheme.surface,
                         contentColor = if (isReels) Color.White else MaterialTheme.colorScheme.onSurface,
                         windowInsets = WindowInsets.navigationBars
                     ) {
-                        DemoTab.entries.forEach { tab ->
+                        LocalTab.entries.forEach { tab ->
                             val isSelected = selectedTab == tab
                             NavigationBarItem(
                                 selected = isSelected,
                                 onClick = {
-                                    if (tab == DemoTab.CREATE) createInitialMode = CreateContentMode.POST
+                                    if (tab == LocalTab.CREATE) createInitialMode = CreateContentMode.POST
                                     selectedTab = tab
                                 },
                                 icon = {
@@ -372,17 +476,17 @@ fun LocalDemoShell(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                if (useRail && overlay is DemoOverlay.None) {
+                if (useRail && overlay is LocalOverlay.None) {
                     NavigationRail(
                         containerColor = MaterialTheme.colorScheme.surface,
                         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
                     ) {
-                        DemoTab.entries.forEach { tab ->
+                        LocalTab.entries.forEach { tab ->
                             val isSelected = selectedTab == tab
                             NavigationRailItem(
                                 selected = isSelected,
                                 onClick = {
-                                    if (tab == DemoTab.CREATE) createInitialMode = CreateContentMode.POST
+                                    if (tab == LocalTab.CREATE) createInitialMode = CreateContentMode.POST
                                     selectedTab = tab
                                 },
                                 icon = {
@@ -403,7 +507,7 @@ fun LocalDemoShell(
                         .weight(1f)
                         .fillMaxSize()
                         .then(
-                            if (selectedTab != DemoTab.REELS || overlay !is DemoOverlay.None) {
+                            if (selectedTab != LocalTab.REELS || overlay !is LocalOverlay.None) {
                                 Modifier.windowInsetsPadding(WindowInsets.statusBars)
                             } else {
                                 Modifier
@@ -411,35 +515,36 @@ fun LocalDemoShell(
                         )
                 ) {
                     when (val currentOverlay = overlay) {
-                        is DemoOverlay.Notifications -> {
+                        is LocalOverlay.Notifications -> {
                             NotificationsScreen(
                                 notificationsState = UiState.Success(notifications),
+                                verifiedUserIds = verifiedUserIds,
                                 onMarkRead = { nid ->
                                     notifications = notifications.map { if (it.id == nid) it.copy(read = true) else it }
                                 },
                                 onOpenProfile = { uid ->
                                     overlay = if (uid == currentUserId) {
-                                        selectedTab = DemoTab.PROFILE
-                                        DemoOverlay.None
+                                        selectedTab = LocalTab.PROFILE
+                                        LocalOverlay.None
                                     } else {
-                                        DemoOverlay.UserDetail(uid)
+                                        LocalOverlay.UserDetail(uid)
                                     }
                                 },
-                                onBack = { overlay = DemoOverlay.None }
+                                onBack = { overlay = LocalOverlay.None }
                             )
                         }
 
-                        is DemoOverlay.DmInbox -> {
+                        is LocalOverlay.DmInbox -> {
                             DmInboxScreen(
                                 currentUserId = currentUserId,
                                 profiles = allProfiles,
                                 conversationsState = UiState.Success(conversations),
-                                onOpenChat = { peer -> overlay = DemoOverlay.ChatThread(peer) },
-                                onBack = { overlay = DemoOverlay.None }
+                                onOpenChat = { peer -> overlay = LocalOverlay.ChatThread(peer) },
+                                onBack = { overlay = LocalOverlay.None }
                             )
                         }
 
-                        is DemoOverlay.ChatThread -> {
+                        is LocalOverlay.ChatThread -> {
                             val convId = if (currentUserId <= currentOverlay.peer.userId) {
                                 "dm_${currentUserId}_${currentOverlay.peer.userId}"
                             } else {
@@ -455,15 +560,18 @@ fun LocalDemoShell(
                                 peerProfile = currentOverlay.peer,
                                 messagesState = UiState.Success(messagesMap[convId].orEmpty()),
                                 onSendMessage = { msg -> sendLocalDm(currentOverlay.peer, msg) },
-                                onOpenProfile = { uid -> overlay = DemoOverlay.UserDetail(uid) },
-                                onBack = { overlay = DemoOverlay.DmInbox }
+                                onOpenProfile = { uid -> overlay = LocalOverlay.UserDetail(uid) },
+                                onBack = { overlay = LocalOverlay.DmInbox }
                             )
                         }
 
-                        is DemoOverlay.SettingsAndActivity -> {
+                        is LocalOverlay.SettingsAndActivity -> {
                             SettingsAndActivityScreen(
                                 currentUserId = currentUserId,
-                                userEmail = "offline@starmax.app",
+                                userEmail = "",
+                                userPhone = activeAccount.phoneE164,
+                                savedAccountsCount = syncedSavedAccounts.size.coerceAtLeast(1),
+                                activeAuth = null,
                                 profile = myProfile,
                                 userSettings = userSettings,
                                 themeMode = localThemeMode,
@@ -475,7 +583,8 @@ fun LocalDemoShell(
                                 likedIds = likedIds,
                                 savedIds = savedIds,
                                 followingIds = followingIds,
-                                onBack = { overlay = DemoOverlay.None },
+                                verifiedUserIds = verifiedUserIds,
+                                onBack = { overlay = LocalOverlay.None },
                                 onSetDarkModeEnabled = { enabled ->
                                     updateTheme(if (enabled) ThemeMode.DARK else ThemeMode.LIGHT)
                                 },
@@ -483,6 +592,14 @@ fun LocalDemoShell(
                                 onSetAccountPrivacy = { isPriv ->
                                     userSettings = userSettings.copy(isPrivate = isPriv)
                                     myProfile = myProfile.copy(isPrivate = isPriv)
+                                    sessionManager.updateAccountProfile(
+                                        uid = currentUserId,
+                                        username = myProfile.username,
+                                        fullName = myProfile.fullName,
+                                        avatarData = myProfile.avatarData,
+                                        verified = myProfile.verified,
+                                        isPrivate = isPriv
+                                    )
                                     toastMessage = if (isPriv) "Account set to Private" else "Account set to Public"
                                 },
                                 onUpdateNotificationPrefs = { l, c, f, m ->
@@ -494,36 +611,75 @@ fun LocalDemoShell(
                                     )
                                 },
                                 onSaveProfileEdits = { u, f, b, w, a ->
-                                    myProfile = myProfile.copy(
-                                        username = u.trim().ifBlank { myProfile.username },
-                                        fullName = f.trim().ifBlank { myProfile.fullName },
-                                        bio = b.trim(),
-                                        website = w.trim(),
-                                        avatarData = a ?: myProfile.avatarData
+                                    saveEditedProfile(u, f, b, w, a)
+                                },
+                                onSubmitVerificationRequest = { fullName, knownAs, category, link, idProofData, onDone ->
+                                    myProfile = myProfile.copy(verified = true)
+                                    userSettings = userSettings.copy(
+                                        verificationStatus = "verified",
+                                        verificationFullName = fullName,
+                                        verificationKnownAs = knownAs,
+                                        verificationCategory = category,
+                                        verificationLink = link,
+                                        verificationIdProofData = idProofData,
+                                        verificationSubmittedAtMillis = System.currentTimeMillis()
                                     )
-                                    toastMessage = "Profile updated"
+                                    sessionManager.updateAccountVerification(
+                                        uid = currentUserId,
+                                        verified = true,
+                                        verificationStatus = "verified",
+                                        fullName = fullName,
+                                        category = category,
+                                        knownAs = knownAs,
+                                        link = link,
+                                        idProofData = idProofData
+                                    )
+                                    toastMessage = "Blue Tick Verified enabled on @${myProfile.username}!"
+                                    onDone()
+                                },
+                                onSetDeveloperVerified = { enabled ->
+                                    myProfile = myProfile.copy(verified = enabled)
+                                    val status = if (enabled) "verified" else "none"
+                                    userSettings = userSettings.copy(verificationStatus = status)
+                                    sessionManager.updateAccountVerification(
+                                        uid = currentUserId,
+                                        verified = enabled,
+                                        verificationStatus = status
+                                    )
+                                    toastMessage = if (enabled) {
+                                        "Blue Tick Verified badge enabled on @${myProfile.username}"
+                                    } else {
+                                        "Blue Tick Verified badge removed from @${myProfile.username}"
+                                    }
+                                },
+                                onUpdateAppPassword = { newPwd, onResult ->
+                                    val res = sessionManager.updateLocalPassword(currentUserId, newPwd)
+                                    if (res.isSuccess) {
+                                        toastMessage = "Password updated"
+                                    }
+                                    onResult(res)
                                 },
                                 onLikeToggle = { toggleLikePost(it) },
                                 onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
                                 onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
-                                onSaveToggle = { pid ->
-                                    savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid
-                                },
+                                onSaveToggle = { toggleSavePost(it) },
                                 onToggleArchivePost = { post ->
                                     if (post.id.startsWith("sample_")) {
                                         toastMessage = "Sample posts cannot be archived"
                                     } else if (post in archivedPosts) {
                                         archivedPosts = archivedPosts - post
                                         posts = listOf(post.copy(visibility = "public")) + posts
+                                        localStore.saveCustomPosts(posts + archivedPosts)
                                         toastMessage = "Post restored to profile"
                                     } else {
                                         posts = posts - post
                                         archivedPosts = listOf(post.copy(visibility = "archived")) + archivedPosts
+                                        localStore.saveCustomPosts(posts + archivedPosts)
                                         toastMessage = "Post archived"
                                     }
                                 },
                                 onFollowToggle = { uid ->
-                                    followingIds = if (uid in followingIds) followingIds - uid else followingIds + uid
+                                    allProfiles.firstOrNull { it.userId == uid }?.let { toggleFollowProfile(it) }
                                 },
                                 onApproveFollowRequest = { req ->
                                     followRequests = followRequests.filterNot { it.requesterId == req.requesterId }
@@ -533,19 +689,12 @@ fun LocalDemoShell(
                                     followRequests = followRequests.filterNot { it.requesterId == reqId }
                                 },
                                 onShowMessage = { toastMessage = it },
-                                onSignOut = {
-                                    if (canReturnToSignIn) {
-                                        onExitDemo()
-                                    } else {
-                                        overlay = DemoOverlay.None
-                                        selectedTab = DemoTab.HOME
-                                        toastMessage = "Local session refreshed"
-                                    }
-                                }
+                                onSignOut = onSignOut,
+                                onSignOutAll = onSignOutAll
                             )
                         }
 
-                        is DemoOverlay.UserDetail -> {
+                        is LocalOverlay.UserDetail -> {
                             val target = allProfiles.firstOrNull { it.userId == currentOverlay.userId }
                                 ?: UserProfile(userId = currentOverlay.userId, username = "creator", fullName = "Star Max Creator")
                             ProfileScreen(
@@ -556,26 +705,28 @@ fun LocalDemoShell(
                                 likedIds = likedIds,
                                 followingIds = followingIds,
                                 sentFollowRequestIds = sentFollowRequestIds,
+                                verifiedUserIds = verifiedUserIds,
                                 themeMode = localThemeMode,
                                 onCycleTheme = { cycleTheme() },
-                                onSaveProfileEdits = { _, _, _, _, _ -> },
-                                onFollowToggle = { t ->
-                                    followingIds = if (t.userId in followingIds) followingIds - t.userId else followingIds + t.userId
-                                },
-                                onMessageUser = { peer -> overlay = DemoOverlay.ChatThread(peer) },
+                                onSaveProfileEdits = { u, f, b, w, a -> saveEditedProfile(u, f, b, w, a) },
+                                onFollowToggle = { toggleFollowProfile(it) },
+                                onMessageUser = { peer -> overlay = LocalOverlay.ChatThread(peer) },
                                 onLikeToggle = { toggleLikePost(it) },
                                 onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
                                 onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
-                                onSaveToggle = { pid -> savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid },
+                                onSaveToggle = { toggleSavePost(it) },
                                 onArchiveToggle = {},
-                                onOpenSettingsAndActivity = { overlay = DemoOverlay.SettingsAndActivity },
-                                onBack = { overlay = DemoOverlay.None }
+                                onOpenSettingsAndActivity = { overlay = LocalOverlay.SettingsAndActivity },
+                                savedAccounts = syncedSavedAccounts,
+                                onSwitchAccount = onSwitchAccount,
+                                onAddAccount = onAddAccount,
+                                onBack = { overlay = LocalOverlay.None }
                             )
                         }
 
-                        is DemoOverlay.None -> {
+                        is LocalOverlay.None -> {
                             when (selectedTab) {
-                                DemoTab.HOME -> {
+                                LocalTab.HOME -> {
                                     HomeFeedScreen(
                                         currentUserId = currentUserId,
                                         currentUserProfile = myProfile,
@@ -589,33 +740,38 @@ fun LocalDemoShell(
                                         unreadMessages = unreadMessages,
                                         themeMode = localThemeMode,
                                         onCycleTheme = { cycleTheme() },
-                                        onOpenNotifications = { overlay = DemoOverlay.Notifications },
-                                        onOpenMessages = { overlay = DemoOverlay.DmInbox },
+                                        onOpenNotifications = { overlay = LocalOverlay.Notifications },
+                                        onOpenMessages = { overlay = LocalOverlay.DmInbox },
                                         onOpenCreateStory = {
                                             createInitialMode = CreateContentMode.STORY
-                                            selectedTab = DemoTab.CREATE
+                                            selectedTab = LocalTab.CREATE
                                         },
                                         onOpenStory = { list, idx -> activeStoryViewer = list to idx },
                                         onLikeToggle = { toggleLikePost(it) },
                                         onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
                                         onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
-                                        onSaveToggle = { pid -> savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid },
+                                        onSaveToggle = { toggleSavePost(it) },
                                         onOpenProfile = { uid ->
-                                            if (uid == currentUserId) selectedTab = DemoTab.PROFILE
-                                            else overlay = DemoOverlay.UserDetail(uid)
+                                            if (uid == currentUserId) selectedTab = LocalTab.PROFILE
+                                            else overlay = LocalOverlay.UserDetail(uid)
                                         },
-                                        onFollowToggle = { t ->
-                                            followingIds = if (t.userId in followingIds) followingIds - t.userId else followingIds + t.userId
-                                        },
+                                        onFollowToggle = { toggleFollowProfile(it) },
                                         onHashtagClick = { tag ->
                                             exploreInitialQuery = "#$tag"
-                                            selectedTab = DemoTab.EXPLORE
+                                            selectedTab = LocalTab.EXPLORE
                                         },
-                                        onArchiveToggle = {}
+                                        onArchiveToggle = { post ->
+                                            if (!post.id.startsWith("sample_")) {
+                                                posts = posts - post
+                                                archivedPosts = listOf(post.copy(visibility = "archived")) + archivedPosts
+                                                localStore.saveCustomPosts(posts + archivedPosts)
+                                                toastMessage = "Post archived"
+                                            }
+                                        }
                                     )
                                 }
 
-                                DemoTab.EXPLORE -> {
+                                LocalTab.EXPLORE -> {
                                     ExploreScreen(
                                         currentUserId = currentUserId,
                                         initialQuery = exploreInitialQuery,
@@ -624,21 +780,19 @@ fun LocalDemoShell(
                                         likedIds = likedIds,
                                         savedIds = savedIds,
                                         followingIds = followingIds,
-                                        onFollowToggle = { t ->
-                                            followingIds = if (t.userId in followingIds) followingIds - t.userId else followingIds + t.userId
-                                        },
+                                        onFollowToggle = { toggleFollowProfile(it) },
                                         onOpenProfile = { uid ->
-                                            if (uid == currentUserId) selectedTab = DemoTab.PROFILE
-                                            else overlay = DemoOverlay.UserDetail(uid)
+                                            if (uid == currentUserId) selectedTab = LocalTab.PROFILE
+                                            else overlay = LocalOverlay.UserDetail(uid)
                                         },
                                         onLikeToggle = { toggleLikePost(it) },
                                         onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
                                         onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
-                                        onSaveToggle = { pid -> savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid }
+                                        onSaveToggle = { toggleSavePost(it) }
                                     )
                                 }
 
-                                DemoTab.CREATE -> {
+                                LocalTab.CREATE -> {
                                     CreateContentScreen(
                                         initialMode = createInitialMode,
                                         onPublishPost = { caption, location, tags, mediaType, mediaData, videoUri ->
@@ -659,9 +813,10 @@ fun LocalDemoShell(
                                                 createdAt = Timestamp.now()
                                             )
                                             posts = listOf(newPost) + posts
+                                            localStore.saveCustomPosts(posts + archivedPosts)
                                             myProfile = myProfile.copy(postsCount = myProfile.postsCount + 1L)
                                             toastMessage = "Post published"
-                                            selectedTab = DemoTab.HOME
+                                            selectedTab = LocalTab.HOME
                                         },
                                         onPublishReel = { caption, audioTitle, videoUri, thumb ->
                                             val newReel = Reel(
@@ -677,8 +832,9 @@ fun LocalDemoShell(
                                                 createdAt = Timestamp.now()
                                             )
                                             reels = listOf(newReel) + reels
+                                            localStore.saveCustomReels(reels)
                                             toastMessage = "Reel published"
-                                            selectedTab = DemoTab.REELS
+                                            selectedTab = LocalTab.REELS
                                         },
                                         onPublishStory = { mediaType, mediaData, textContent, bg ->
                                             val newStory = Story(
@@ -695,36 +851,35 @@ fun LocalDemoShell(
                                                 createdAt = Timestamp.now()
                                             )
                                             stories = listOf(newStory) + stories
+                                            localStore.saveCustomStories(stories)
                                             toastMessage = "Story shared for 24 hours"
-                                            selectedTab = DemoTab.HOME
+                                            selectedTab = LocalTab.HOME
                                         }
                                     )
                                 }
 
-                                DemoTab.REELS -> {
+                                LocalTab.REELS -> {
                                     ReelsScreen(
                                         currentUserId = currentUserId,
                                         reels = reels,
                                         profiles = allProfiles,
                                         likedIds = likedIds,
                                         followingIds = followingIds,
-                                        isActiveTab = selectedTab == DemoTab.REELS && overlay is DemoOverlay.None,
+                                        isActiveTab = selectedTab == LocalTab.REELS && overlay is LocalOverlay.None,
                                         onLikeToggle = { reel ->
-                                            val wasLiked = reel.id in likedIds
-                                            likedIds = if (wasLiked) likedIds - reel.id else likedIds + reel.id
+                                            likedIds = if (reel.id in likedIds) likedIds - reel.id else likedIds + reel.id
+                                            localStore.saveUserSet(currentUserId, "liked", likedIds)
                                         },
                                         onOpenComments = { reel -> activeCommentTarget = Triple(reel.id, reel.userId, true) },
-                                        onFollowToggle = { t ->
-                                            followingIds = if (t.userId in followingIds) followingIds - t.userId else followingIds + t.userId
-                                        },
+                                        onFollowToggle = { toggleFollowProfile(it) },
                                         onOpenProfile = { uid ->
-                                            if (uid == currentUserId) selectedTab = DemoTab.PROFILE
-                                            else overlay = DemoOverlay.UserDetail(uid)
+                                            if (uid == currentUserId) selectedTab = LocalTab.PROFILE
+                                            else overlay = LocalOverlay.UserDetail(uid)
                                         }
                                     )
                                 }
 
-                                DemoTab.PROFILE -> {
+                                LocalTab.PROFILE -> {
                                     ProfileScreen(
                                         profile = myProfile,
                                         isOwnProfile = true,
@@ -733,33 +888,29 @@ fun LocalDemoShell(
                                         likedIds = likedIds,
                                         followingIds = followingIds,
                                         sentFollowRequestIds = sentFollowRequestIds,
+                                        verifiedUserIds = verifiedUserIds,
                                         pendingRequestsCount = followRequests.size,
                                         themeMode = localThemeMode,
                                         onCycleTheme = { cycleTheme() },
-                                        onSaveProfileEdits = { u, f, b, w, a ->
-                                            myProfile = myProfile.copy(
-                                                username = u.trim().ifBlank { myProfile.username },
-                                                fullName = f.trim().ifBlank { myProfile.fullName },
-                                                bio = b.trim(),
-                                                website = w.trim(),
-                                                avatarData = a ?: myProfile.avatarData
-                                            )
-                                            toastMessage = "Profile updated"
-                                        },
+                                        onSaveProfileEdits = { u, f, b, w, a -> saveEditedProfile(u, f, b, w, a) },
                                         onFollowToggle = {},
                                         onMessageUser = {},
                                         onLikeToggle = { toggleLikePost(it) },
                                         onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
                                         onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
-                                        onSaveToggle = { pid -> savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid },
+                                        onSaveToggle = { toggleSavePost(it) },
                                         onArchiveToggle = { post ->
                                             if (!post.id.startsWith("sample_")) {
                                                 posts = posts - post
                                                 archivedPosts = listOf(post.copy(visibility = "archived")) + archivedPosts
+                                                localStore.saveCustomPosts(posts + archivedPosts)
                                                 toastMessage = "Post archived"
                                             }
                                         },
-                                        onOpenSettingsAndActivity = { overlay = DemoOverlay.SettingsAndActivity }
+                                        onOpenSettingsAndActivity = { overlay = LocalOverlay.SettingsAndActivity },
+                                        savedAccounts = syncedSavedAccounts,
+                                        onSwitchAccount = onSwitchAccount,
+                                        onAddAccount = onAddAccount
                                     )
                                 }
                             }
@@ -774,6 +925,7 @@ fun LocalDemoShell(
         val comments = commentsMap[targetId].orEmpty()
         CommentsBottomSheet(
             comments = comments,
+            verifiedUserIds = verifiedUserIds,
             onDismiss = { activeCommentTarget = null },
             onSubmitComment = { text ->
                 val trimmed = text.trim()
@@ -790,6 +942,7 @@ fun LocalDemoShell(
                     )
                     commentsMap[targetId] = commentsMap[targetId].orEmpty() + newComment
                     userComments = listOf(newComment) + userComments
+                    localStore.addComment(newComment)
                 }
             }
         )

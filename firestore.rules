@@ -56,6 +56,13 @@ service cloud.firestore {
              (!('dailyUsageSeconds' in data) || (data.dailyUsageSeconds is int && data.dailyUsageSeconds >= 0 && data.dailyUsageSeconds <= 864000)) &&
              (!('usageDate' in data) || (data.usageDate is string && data.usageDate.size() <= 16)) &&
              (!('phoneE164' in data) || (data.phoneE164 is string && data.phoneE164.size() <= 20)) &&
+             (!('verificationStatus' in data) || data.verificationStatus in ['none', 'pending', 'verified']) &&
+             (!('verificationFullName' in data) || (data.verificationFullName is string && data.verificationFullName.size() <= 80)) &&
+             (!('verificationCategory' in data) || (data.verificationCategory is string && data.verificationCategory.size() <= 40)) &&
+             (!('verificationKnownAs' in data) || (data.verificationKnownAs is string && data.verificationKnownAs.size() <= 80)) &&
+             (!('verificationLink' in data) || (data.verificationLink is string && data.verificationLink.size() <= 200)) &&
+             (!('verificationIdProofData' in data) || (data.verificationIdProofData is string && data.verificationIdProofData.size() <= 350000)) &&
+             (!('verificationSubmittedAtMillis' in data) || (data.verificationSubmittedAtMillis is int && data.verificationSubmittedAtMillis >= 0)) &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
     }
@@ -224,13 +231,13 @@ service cloud.firestore {
       allow create: if isOwner(userId) && isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'themeMode', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'verificationStatus', 'verificationFullName', 'verificationCategory', 'verificationKnownAs', 'verificationLink', 'verificationIdProofData', 'verificationSubmittedAtMillis', 'createdAt', 'updatedAt']) &&
                        isValidUserAccount(incoming());
       allow update: if isOwner(userId) && isValidId(userId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidUserAccount(incoming()) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'verificationStatus', 'verificationFullName', 'verificationCategory', 'verificationKnownAs', 'verificationLink', 'verificationIdProofData', 'verificationSubmittedAtMillis', 'updatedAt']);
       allow delete: if isOwner(userId) && isValidId(userId);
 
       match /likes/{targetId} {
@@ -323,7 +330,6 @@ service cloud.firestore {
                        incoming().createdAt == existing().createdAt &&
                        (
                          (request.auth.uid == profileId &&
-                          (incoming().verified == existing().verified || (incoming().verified && hasVerifiedPhoneClaim())) &&
                           incoming().diff(existing()).affectedKeys().hasOnly(['username', 'usernameLower', 'fullName', 'bio', 'website', 'avatarData', 'avatarTint', 'isPrivate', 'postsCount', 'followingCount', 'verified', 'online', 'updatedAt'])) ||
                          (incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'updatedAt']))
                        );

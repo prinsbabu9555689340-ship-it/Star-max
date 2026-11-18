@@ -301,6 +301,46 @@ class StarMaxViewModel(
         }
     }
 
+    fun submitVerificationRequest(
+        fullName: String,
+        knownAs: String,
+        category: String,
+        link: String,
+        idProofData: String,
+        onDone: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            repository.submitVerificationRequest(fullName, knownAs, category, link, idProofData)
+                .onSuccess { status ->
+                    _actionMessage.value = if (status == "verified") {
+                        "Your Star Max profile is verified!"
+                    } else {
+                        "Verification request submitted (Pending review)"
+                    }
+                    onDone()
+                }
+                .onFailure {
+                    _actionError.value = it.localizedMessage ?: "Failed to submit verification request"
+                }
+        }
+    }
+
+    fun setDeveloperVerified(verified: Boolean) {
+        viewModelScope.launch {
+            repository.setDeveloperVerified(verified)
+                .onSuccess {
+                    _actionMessage.value = if (verified) {
+                        "Blue Tick Verified badge enabled on your profile"
+                    } else {
+                        "Blue Tick Verified badge removed from your profile"
+                    }
+                }
+                .onFailure {
+                    _actionError.value = it.localizedMessage ?: "Failed to toggle verification"
+                }
+        }
+    }
+
     fun toggleArchivePost(post: Post) {
         val currentlyArchived = post.visibility == "archived"
         viewModelScope.launch {

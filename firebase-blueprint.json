@@ -15,6 +15,13 @@
         "dailyUsageSeconds": { "type": "integer" },
         "usageDate": { "type": "string" },
         "phoneE164": { "type": "string" },
+        "verificationStatus": { "type": "string", "enum": ["none", "pending", "verified"] },
+        "verificationFullName": { "type": "string" },
+        "verificationCategory": { "type": "string" },
+        "verificationKnownAs": { "type": "string" },
+        "verificationLink": { "type": "string" },
+        "verificationIdProofData": { "type": "string" },
+        "verificationSubmittedAtMillis": { "type": "integer" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
       },
