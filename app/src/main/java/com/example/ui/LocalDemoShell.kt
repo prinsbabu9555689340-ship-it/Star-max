@@ -1,0 +1,817 @@
+package com.example.ui
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddBox
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.outlined.AddBox
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.data.firebase.ThemePreferences
+import com.example.data.model.ChatMessage
+import com.example.data.model.Comment
+import com.example.data.model.Conversation
+import com.example.data.model.FollowRequest
+import com.example.data.model.Post
+import com.example.data.model.Reel
+import com.example.data.model.SampleData
+import com.example.data.model.Story
+import com.example.data.model.ThemeMode
+import com.example.data.model.UiState
+import com.example.data.model.UserProfile
+import com.example.data.model.UserSettings
+import com.example.ui.components.CommentsBottomSheet
+import com.example.ui.screens.ChatThreadScreen
+import com.example.ui.screens.CreateContentMode
+import com.example.ui.screens.CreateContentScreen
+import com.example.ui.screens.DmInboxScreen
+import com.example.ui.screens.ExploreScreen
+import com.example.ui.screens.HomeFeedScreen
+import com.example.ui.screens.NotificationsScreen
+import com.example.ui.screens.ProfileScreen
+import com.example.ui.screens.ReelsScreen
+import com.example.ui.screens.SettingsAndActivityScreen
+import com.example.ui.screens.StoryViewerDialog
+import com.google.firebase.Timestamp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import java.util.UUID
+
+private enum class DemoTab(
+    val route: String,
+    val label: String,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector
+) {
+    HOME("home", "Home", Icons.Filled.Home, Icons.Outlined.Home),
+    EXPLORE("explore", "Explore", Icons.Filled.Explore, Icons.Outlined.Explore),
+    CREATE("create", "Create", Icons.Filled.AddBox, Icons.Outlined.AddBox),
+    REELS("reels", "Reels", Icons.Filled.Movie, Icons.Outlined.Movie),
+    PROFILE("profile", "Profile", Icons.Filled.Person, Icons.Outlined.Person)
+}
+
+private sealed interface DemoOverlay {
+    data object None : DemoOverlay
+    data object Notifications : DemoOverlay
+    data object DmInbox : DemoOverlay
+    data object SettingsAndActivity : DemoOverlay
+    data class ChatThread(val peer: UserProfile) : DemoOverlay
+    data class UserDetail(val userId: String) : DemoOverlay
+}
+
+@Composable
+fun LocalDemoShell(
+    themePreferences: ThemePreferences?,
+    currentThemeMode: ThemeMode,
+    canReturnToSignIn: Boolean = false,
+    onThemeModeSelected: (ThemeMode) -> Unit = {},
+    onExitDemo: () -> Unit = {}
+) {
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val currentUserId = "demo_local_user"
+
+    var myProfile by remember {
+        mutableStateOf(
+            UserProfile(
+                id = currentUserId,
+                userId = currentUserId,
+                username = "star_creator",
+                usernameLower = "star_creator",
+                fullName = "Star Max Creator",
+                bio = "Capturing everyday moments on Star Max",
+                website = "https://starmax.app",
+                avatarData = "res:ic_starmax_mark",
+                avatarTint = "#E1306C",
+                postsCount = 0L,
+                followersCount = 128L,
+                followingCount = 2L,
+                online = true
+            )
+        )
+    }
+
+    var localThemeMode by remember(currentThemeMode) { mutableStateOf(currentThemeMode) }
+    var userSettings by remember { mutableStateOf(UserSettings(userId = currentUserId)) }
+    var todayUsageSeconds by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(themePreferences) {
+        if (themePreferences != null) {
+            runCatching {
+                todayUsageSeconds = themePreferences.dailyUsageSeconds.first()
+            }
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isForeground by remember { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> isForeground = true
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    isForeground = false
+                    if (themePreferences != null) {
+                        scope.launch {
+                            runCatching {
+                                themePreferences.setDailyUsage(
+                                    ThemePreferences.todayDateKey(),
+                                    todayUsageSeconds
+                                )
+                            }
+                        }
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(isForeground) {
+        while (isForeground && isActive) {
+            delay(1000L)
+            todayUsageSeconds += 1L
+            if (todayUsageSeconds % 30L == 0L && themePreferences != null) {
+                runCatching {
+                    themePreferences.setDailyUsage(
+                        ThemePreferences.todayDateKey(),
+                        todayUsageSeconds
+                    )
+                }
+            }
+        }
+    }
+
+    var profiles by remember { mutableStateOf(SampleData.sampleProfiles) }
+    var posts by remember { mutableStateOf(SampleData.samplePosts) }
+    var archivedPosts by remember { mutableStateOf(emptyList<Post>()) }
+    var stories by remember { mutableStateOf(SampleData.sampleStories) }
+    var reels by remember { mutableStateOf(SampleData.sampleReels) }
+    var notifications by remember { mutableStateOf(SampleData.sampleNotifications) }
+    var followRequests by remember { mutableStateOf(emptyList<FollowRequest>()) }
+
+    var likedIds by remember { mutableStateOf(setOf("sample_post_1")) }
+    var savedIds by remember { mutableStateOf(setOf("sample_post_2")) }
+    var followingIds by remember { mutableStateOf(setOf("sample_kai", "sample_maya")) }
+    var sentFollowRequestIds by remember { mutableStateOf(emptySet<String>()) }
+
+    val commentsMap = remember {
+        mutableStateMapOf<String, List<Comment>>().apply {
+            putAll(SampleData.sampleCommentsByPost)
+        }
+    }
+    var userComments by remember { mutableStateOf(emptyList<Comment>()) }
+
+    var conversations by remember {
+        mutableStateOf(
+            listOf(
+                Conversation(
+                    id = "dm_demo_kai",
+                    participantUids = listOf(currentUserId, "sample_kai"),
+                    userAId = currentUserId,
+                    userAUsername = "star_creator",
+                    userAAvatar = "res:ic_starmax_mark",
+                    userBId = "sample_kai",
+                    userBUsername = "kai_tokyo",
+                    userBAvatar = "res:img_post_neon_tokyo",
+                    lastMessage = "Welcome to Star Max! Loving your shots.",
+                    lastSenderId = "sample_kai",
+                    unreadBy = listOf(currentUserId),
+                    updatedAt = Timestamp.now()
+                )
+            )
+        )
+    }
+    val messagesMap = remember {
+        mutableStateMapOf(
+            "dm_demo_kai" to listOf(
+                ChatMessage(
+                    id = "demo_msg_1",
+                    convId = "dm_demo_kai",
+                    senderId = "sample_kai",
+                    participantUids = listOf(currentUserId, "sample_kai"),
+                    text = "Welcome to Star Max! Loving your shots.",
+                    seenBy = listOf("sample_kai"),
+                    createdAt = Timestamp.now()
+                )
+            )
+        )
+    }
+
+    var toastMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(toastMessage) {
+        toastMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            toastMessage = null
+        }
+    }
+
+    var selectedTab by remember { mutableStateOf(DemoTab.HOME) }
+    var overlay by remember { mutableStateOf<DemoOverlay>(DemoOverlay.None) }
+    var exploreInitialQuery by remember { mutableStateOf("") }
+    var createInitialMode by remember { mutableStateOf(CreateContentMode.POST) }
+    var activeCommentTarget by remember { mutableStateOf<Triple<String, String, Boolean>?>(null) }
+    var activeStoryViewer by remember { mutableStateOf<Pair<List<Story>, Int>?>(null) }
+
+    fun updateTheme(mode: ThemeMode) {
+        localThemeMode = mode
+        onThemeModeSelected(mode)
+        if (themePreferences != null) {
+            scope.launch { runCatching { themePreferences.setThemeMode(mode) } }
+        }
+    }
+
+    fun cycleTheme() {
+        val next = when (localThemeMode) {
+            ThemeMode.SYSTEM -> ThemeMode.DARK
+            ThemeMode.DARK -> ThemeMode.LIGHT
+            ThemeMode.LIGHT -> ThemeMode.SYSTEM
+        }
+        updateTheme(next)
+    }
+
+    fun toggleLikePost(post: Post) {
+        val wasLiked = post.id in likedIds
+        likedIds = if (wasLiked) likedIds - post.id else likedIds + post.id
+        if (!post.id.startsWith("sample_")) {
+            posts = posts.map {
+                if (it.id == post.id) it.copy(likesCount = (it.likesCount + if (wasLiked) -1L else 1L).coerceAtLeast(0L)) else it
+            }
+        }
+    }
+
+    fun sendLocalDm(peer: UserProfile, text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        val convId = if (currentUserId <= peer.userId) "dm_${currentUserId}_${peer.userId}" else "dm_${peer.userId}_${currentUserId}"
+        val msg = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            convId = convId,
+            senderId = currentUserId,
+            participantUids = listOf(currentUserId, peer.userId),
+            text = clean,
+            seenBy = listOf(currentUserId),
+            createdAt = Timestamp.now()
+        )
+        messagesMap[convId] = messagesMap[convId].orEmpty() + msg
+        val updatedConv = Conversation(
+            id = convId,
+            participantUids = listOf(currentUserId, peer.userId),
+            userAId = myProfile.userId,
+            userAUsername = myProfile.username,
+            userAAvatar = myProfile.avatarData,
+            userBId = peer.userId,
+            userBUsername = peer.username,
+            userBAvatar = peer.avatarData,
+            lastMessage = clean,
+            lastSenderId = currentUserId,
+            unreadBy = emptyList(),
+            updatedAt = Timestamp.now()
+        )
+        conversations = listOf(updatedConv) + conversations.filterNot { it.id == convId }
+    }
+
+    val allProfiles = remember(myProfile, profiles) { listOf(myProfile) + profiles }
+    val unreadNotifications = remember(notifications) { notifications.count { !it.read } }
+    val unreadMessages = remember(conversations) { conversations.count { currentUserId in it.unreadBy } }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val useRail = maxWidth >= 680.dp
+
+        Scaffold(
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            bottomBar = {
+                if (!useRail && overlay is DemoOverlay.None) {
+                    val isReels = selectedTab == DemoTab.REELS
+                    NavigationBar(
+                        containerColor = if (isReels) Color.Black else MaterialTheme.colorScheme.surface,
+                        contentColor = if (isReels) Color.White else MaterialTheme.colorScheme.onSurface,
+                        windowInsets = WindowInsets.navigationBars
+                    ) {
+                        DemoTab.entries.forEach { tab ->
+                            val isSelected = selectedTab == tab
+                            NavigationBarItem(
+                                selected = isSelected,
+                                onClick = {
+                                    if (tab == DemoTab.CREATE) createInitialMode = CreateContentMode.POST
+                                    selectedTab = tab
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
+                                        contentDescription = tab.label,
+                                        tint = if (isReels) {
+                                            if (isSelected) Color.White else Color.White.copy(alpha = 0.6f)
+                                        } else {
+                                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        text = tab.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isReels) Color.White else MaterialTheme.colorScheme.onSurface
+                                    )
+                                },
+                                modifier = Modifier.testTag("nav_tab_${tab.route}")
+                            )
+                        }
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                if (useRail && overlay is DemoOverlay.None) {
+                    NavigationRail(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                    ) {
+                        DemoTab.entries.forEach { tab ->
+                            val isSelected = selectedTab == tab
+                            NavigationRailItem(
+                                selected = isSelected,
+                                onClick = {
+                                    if (tab == DemoTab.CREATE) createInitialMode = CreateContentMode.POST
+                                    selectedTab = tab
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
+                                        contentDescription = tab.label
+                                    )
+                                },
+                                label = { Text(tab.label) },
+                                modifier = Modifier.testTag("rail_tab_${tab.route}")
+                            )
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .then(
+                            if (selectedTab != DemoTab.REELS || overlay !is DemoOverlay.None) {
+                                Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                            } else {
+                                Modifier
+                            }
+                        )
+                ) {
+                    when (val currentOverlay = overlay) {
+                        is DemoOverlay.Notifications -> {
+                            NotificationsScreen(
+                                notificationsState = UiState.Success(notifications),
+                                onMarkRead = { nid ->
+                                    notifications = notifications.map { if (it.id == nid) it.copy(read = true) else it }
+                                },
+                                onOpenProfile = { uid ->
+                                    overlay = if (uid == currentUserId) {
+                                        selectedTab = DemoTab.PROFILE
+                                        DemoOverlay.None
+                                    } else {
+                                        DemoOverlay.UserDetail(uid)
+                                    }
+                                },
+                                onBack = { overlay = DemoOverlay.None }
+                            )
+                        }
+
+                        is DemoOverlay.DmInbox -> {
+                            DmInboxScreen(
+                                currentUserId = currentUserId,
+                                profiles = allProfiles,
+                                conversationsState = UiState.Success(conversations),
+                                onOpenChat = { peer -> overlay = DemoOverlay.ChatThread(peer) },
+                                onBack = { overlay = DemoOverlay.None }
+                            )
+                        }
+
+                        is DemoOverlay.ChatThread -> {
+                            val convId = if (currentUserId <= currentOverlay.peer.userId) {
+                                "dm_${currentUserId}_${currentOverlay.peer.userId}"
+                            } else {
+                                "dm_${currentOverlay.peer.userId}_${currentUserId}"
+                            }
+                            LaunchedEffect(convId) {
+                                conversations = conversations.map {
+                                    if (it.id == convId) it.copy(unreadBy = it.unreadBy - currentUserId) else it
+                                }
+                            }
+                            ChatThreadScreen(
+                                currentUserId = currentUserId,
+                                peerProfile = currentOverlay.peer,
+                                messagesState = UiState.Success(messagesMap[convId].orEmpty()),
+                                onSendMessage = { msg -> sendLocalDm(currentOverlay.peer, msg) },
+                                onOpenProfile = { uid -> overlay = DemoOverlay.UserDetail(uid) },
+                                onBack = { overlay = DemoOverlay.DmInbox }
+                            )
+                        }
+
+                        is DemoOverlay.SettingsAndActivity -> {
+                            SettingsAndActivityScreen(
+                                currentUserId = currentUserId,
+                                userEmail = "offline@starmax.app",
+                                profile = myProfile,
+                                userSettings = userSettings,
+                                themeMode = localThemeMode,
+                                todayUsageSeconds = todayUsageSeconds,
+                                posts = posts,
+                                archivedPosts = archivedPosts,
+                                userComments = userComments,
+                                followRequests = followRequests,
+                                likedIds = likedIds,
+                                savedIds = savedIds,
+                                followingIds = followingIds,
+                                onBack = { overlay = DemoOverlay.None },
+                                onSetDarkModeEnabled = { enabled ->
+                                    updateTheme(if (enabled) ThemeMode.DARK else ThemeMode.LIGHT)
+                                },
+                                onSetThemeMode = { mode -> updateTheme(mode) },
+                                onSetAccountPrivacy = { isPriv ->
+                                    userSettings = userSettings.copy(isPrivate = isPriv)
+                                    myProfile = myProfile.copy(isPrivate = isPriv)
+                                    toastMessage = if (isPriv) "Account set to Private" else "Account set to Public"
+                                },
+                                onUpdateNotificationPrefs = { l, c, f, m ->
+                                    userSettings = userSettings.copy(
+                                        notifyLikes = l,
+                                        notifyComments = c,
+                                        notifyFollowers = f,
+                                        notifyMessages = m
+                                    )
+                                },
+                                onSaveProfileEdits = { u, f, b, w, a ->
+                                    myProfile = myProfile.copy(
+                                        username = u.trim().ifBlank { myProfile.username },
+                                        fullName = f.trim().ifBlank { myProfile.fullName },
+                                        bio = b.trim(),
+                                        website = w.trim(),
+                                        avatarData = a ?: myProfile.avatarData
+                                    )
+                                    toastMessage = "Profile updated"
+                                },
+                                onLikeToggle = { toggleLikePost(it) },
+                                onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
+                                onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
+                                onSaveToggle = { pid ->
+                                    savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid
+                                },
+                                onToggleArchivePost = { post ->
+                                    if (post.id.startsWith("sample_")) {
+                                        toastMessage = "Sample posts cannot be archived"
+                                    } else if (post in archivedPosts) {
+                                        archivedPosts = archivedPosts - post
+                                        posts = listOf(post.copy(visibility = "public")) + posts
+                                        toastMessage = "Post restored to profile"
+                                    } else {
+                                        posts = posts - post
+                                        archivedPosts = listOf(post.copy(visibility = "archived")) + archivedPosts
+                                        toastMessage = "Post archived"
+                                    }
+                                },
+                                onFollowToggle = { uid ->
+                                    followingIds = if (uid in followingIds) followingIds - uid else followingIds + uid
+                                },
+                                onApproveFollowRequest = { req ->
+                                    followRequests = followRequests.filterNot { it.requesterId == req.requesterId }
+                                    myProfile = myProfile.copy(followersCount = myProfile.followersCount + 1L)
+                                },
+                                onDeclineFollowRequest = { reqId ->
+                                    followRequests = followRequests.filterNot { it.requesterId == reqId }
+                                },
+                                onShowMessage = { toastMessage = it },
+                                onSignOut = {
+                                    if (canReturnToSignIn) {
+                                        onExitDemo()
+                                    } else {
+                                        overlay = DemoOverlay.None
+                                        selectedTab = DemoTab.HOME
+                                        toastMessage = "Local session refreshed"
+                                    }
+                                }
+                            )
+                        }
+
+                        is DemoOverlay.UserDetail -> {
+                            val target = allProfiles.firstOrNull { it.userId == currentOverlay.userId }
+                                ?: UserProfile(userId = currentOverlay.userId, username = "creator", fullName = "Star Max Creator")
+                            ProfileScreen(
+                                profile = target,
+                                isOwnProfile = target.userId == currentUserId,
+                                posts = posts,
+                                savedIds = savedIds,
+                                likedIds = likedIds,
+                                followingIds = followingIds,
+                                sentFollowRequestIds = sentFollowRequestIds,
+                                themeMode = localThemeMode,
+                                onCycleTheme = { cycleTheme() },
+                                onSaveProfileEdits = { _, _, _, _, _ -> },
+                                onFollowToggle = { t ->
+                                    followingIds = if (t.userId in followingIds) followingIds - t.userId else followingIds + t.userId
+                                },
+                                onMessageUser = { peer -> overlay = DemoOverlay.ChatThread(peer) },
+                                onLikeToggle = { toggleLikePost(it) },
+                                onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
+                                onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
+                                onSaveToggle = { pid -> savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid },
+                                onArchiveToggle = {},
+                                onOpenSettingsAndActivity = { overlay = DemoOverlay.SettingsAndActivity },
+                                onBack = { overlay = DemoOverlay.None }
+                            )
+                        }
+
+                        is DemoOverlay.None -> {
+                            when (selectedTab) {
+                                DemoTab.HOME -> {
+                                    HomeFeedScreen(
+                                        currentUserId = currentUserId,
+                                        currentUserProfile = myProfile,
+                                        postsState = UiState.Success(posts),
+                                        storiesState = UiState.Success(stories),
+                                        profiles = allProfiles,
+                                        likedIds = likedIds,
+                                        savedIds = savedIds,
+                                        followingIds = followingIds,
+                                        unreadNotifications = unreadNotifications,
+                                        unreadMessages = unreadMessages,
+                                        themeMode = localThemeMode,
+                                        onCycleTheme = { cycleTheme() },
+                                        onOpenNotifications = { overlay = DemoOverlay.Notifications },
+                                        onOpenMessages = { overlay = DemoOverlay.DmInbox },
+                                        onOpenCreateStory = {
+                                            createInitialMode = CreateContentMode.STORY
+                                            selectedTab = DemoTab.CREATE
+                                        },
+                                        onOpenStory = { list, idx -> activeStoryViewer = list to idx },
+                                        onLikeToggle = { toggleLikePost(it) },
+                                        onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
+                                        onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
+                                        onSaveToggle = { pid -> savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid },
+                                        onOpenProfile = { uid ->
+                                            if (uid == currentUserId) selectedTab = DemoTab.PROFILE
+                                            else overlay = DemoOverlay.UserDetail(uid)
+                                        },
+                                        onFollowToggle = { t ->
+                                            followingIds = if (t.userId in followingIds) followingIds - t.userId else followingIds + t.userId
+                                        },
+                                        onHashtagClick = { tag ->
+                                            exploreInitialQuery = "#$tag"
+                                            selectedTab = DemoTab.EXPLORE
+                                        },
+                                        onArchiveToggle = {}
+                                    )
+                                }
+
+                                DemoTab.EXPLORE -> {
+                                    ExploreScreen(
+                                        currentUserId = currentUserId,
+                                        initialQuery = exploreInitialQuery,
+                                        profiles = allProfiles,
+                                        posts = posts,
+                                        likedIds = likedIds,
+                                        savedIds = savedIds,
+                                        followingIds = followingIds,
+                                        onFollowToggle = { t ->
+                                            followingIds = if (t.userId in followingIds) followingIds - t.userId else followingIds + t.userId
+                                        },
+                                        onOpenProfile = { uid ->
+                                            if (uid == currentUserId) selectedTab = DemoTab.PROFILE
+                                            else overlay = DemoOverlay.UserDetail(uid)
+                                        },
+                                        onLikeToggle = { toggleLikePost(it) },
+                                        onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
+                                        onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
+                                        onSaveToggle = { pid -> savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid }
+                                    )
+                                }
+
+                                DemoTab.CREATE -> {
+                                    CreateContentScreen(
+                                        initialMode = createInitialMode,
+                                        onPublishPost = { caption, location, tags, mediaType, mediaData, videoUri ->
+                                            val newPost = Post(
+                                                id = "local_post_${UUID.randomUUID()}",
+                                                userId = currentUserId,
+                                                authorUsername = myProfile.username,
+                                                authorName = myProfile.fullName,
+                                                authorAvatar = myProfile.avatarData,
+                                                caption = caption,
+                                                location = location,
+                                                hashtags = Regex("#([A-Za-z0-9_]+)").findAll(caption).map { it.groupValues[1].lowercase() }.toList(),
+                                                taggedUsers = tags,
+                                                mediaType = mediaType,
+                                                mediaData = mediaData,
+                                                videoUri = videoUri,
+                                                visibility = "public",
+                                                createdAt = Timestamp.now()
+                                            )
+                                            posts = listOf(newPost) + posts
+                                            myProfile = myProfile.copy(postsCount = myProfile.postsCount + 1L)
+                                            toastMessage = "Post published"
+                                            selectedTab = DemoTab.HOME
+                                        },
+                                        onPublishReel = { caption, audioTitle, videoUri, thumb ->
+                                            val newReel = Reel(
+                                                id = "local_reel_${UUID.randomUUID()}",
+                                                userId = currentUserId,
+                                                authorUsername = myProfile.username,
+                                                authorAvatar = myProfile.avatarData,
+                                                caption = caption,
+                                                audioTitle = audioTitle.ifBlank { "${myProfile.username} • Original Audio" },
+                                                videoUri = videoUri,
+                                                thumbnailData = thumb,
+                                                visibility = "public",
+                                                createdAt = Timestamp.now()
+                                            )
+                                            reels = listOf(newReel) + reels
+                                            toastMessage = "Reel published"
+                                            selectedTab = DemoTab.REELS
+                                        },
+                                        onPublishStory = { mediaType, mediaData, textContent, bg ->
+                                            val newStory = Story(
+                                                id = "local_story_${UUID.randomUUID()}",
+                                                userId = currentUserId,
+                                                authorUsername = myProfile.username,
+                                                authorAvatar = myProfile.avatarData,
+                                                mediaType = mediaType,
+                                                mediaData = mediaData,
+                                                textContent = textContent,
+                                                bgGradient = bg,
+                                                visibility = "public",
+                                                expiresAtMillis = System.currentTimeMillis() + 24L * 3_600_000L,
+                                                createdAt = Timestamp.now()
+                                            )
+                                            stories = listOf(newStory) + stories
+                                            toastMessage = "Story shared for 24 hours"
+                                            selectedTab = DemoTab.HOME
+                                        }
+                                    )
+                                }
+
+                                DemoTab.REELS -> {
+                                    ReelsScreen(
+                                        currentUserId = currentUserId,
+                                        reels = reels,
+                                        profiles = allProfiles,
+                                        likedIds = likedIds,
+                                        followingIds = followingIds,
+                                        isActiveTab = selectedTab == DemoTab.REELS && overlay is DemoOverlay.None,
+                                        onLikeToggle = { reel ->
+                                            val wasLiked = reel.id in likedIds
+                                            likedIds = if (wasLiked) likedIds - reel.id else likedIds + reel.id
+                                        },
+                                        onOpenComments = { reel -> activeCommentTarget = Triple(reel.id, reel.userId, true) },
+                                        onFollowToggle = { t ->
+                                            followingIds = if (t.userId in followingIds) followingIds - t.userId else followingIds + t.userId
+                                        },
+                                        onOpenProfile = { uid ->
+                                            if (uid == currentUserId) selectedTab = DemoTab.PROFILE
+                                            else overlay = DemoOverlay.UserDetail(uid)
+                                        }
+                                    )
+                                }
+
+                                DemoTab.PROFILE -> {
+                                    ProfileScreen(
+                                        profile = myProfile,
+                                        isOwnProfile = true,
+                                        posts = posts,
+                                        savedIds = savedIds,
+                                        likedIds = likedIds,
+                                        followingIds = followingIds,
+                                        sentFollowRequestIds = sentFollowRequestIds,
+                                        pendingRequestsCount = followRequests.size,
+                                        themeMode = localThemeMode,
+                                        onCycleTheme = { cycleTheme() },
+                                        onSaveProfileEdits = { u, f, b, w, a ->
+                                            myProfile = myProfile.copy(
+                                                username = u.trim().ifBlank { myProfile.username },
+                                                fullName = f.trim().ifBlank { myProfile.fullName },
+                                                bio = b.trim(),
+                                                website = w.trim(),
+                                                avatarData = a ?: myProfile.avatarData
+                                            )
+                                            toastMessage = "Profile updated"
+                                        },
+                                        onFollowToggle = {},
+                                        onMessageUser = {},
+                                        onLikeToggle = { toggleLikePost(it) },
+                                        onDoubleTapLike = { if (it.id !in likedIds) toggleLikePost(it) },
+                                        onOpenComments = { activeCommentTarget = Triple(it.id, it.userId, false) },
+                                        onSaveToggle = { pid -> savedIds = if (pid in savedIds) savedIds - pid else savedIds + pid },
+                                        onArchiveToggle = { post ->
+                                            if (!post.id.startsWith("sample_")) {
+                                                posts = posts - post
+                                                archivedPosts = listOf(post.copy(visibility = "archived")) + archivedPosts
+                                                toastMessage = "Post archived"
+                                            }
+                                        },
+                                        onOpenSettingsAndActivity = { overlay = DemoOverlay.SettingsAndActivity }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    activeCommentTarget?.let { (targetId, _, _) ->
+        val comments = commentsMap[targetId].orEmpty()
+        CommentsBottomSheet(
+            comments = comments,
+            onDismiss = { activeCommentTarget = null },
+            onSubmitComment = { text ->
+                val trimmed = text.trim()
+                if (trimmed.isNotEmpty()) {
+                    val newComment = Comment(
+                        id = UUID.randomUUID().toString(),
+                        postId = targetId,
+                        userId = currentUserId,
+                        authorUsername = myProfile.username,
+                        authorAvatar = myProfile.avatarData,
+                        text = trimmed,
+                        visibility = "public",
+                        createdAt = Timestamp.now()
+                    )
+                    commentsMap[targetId] = commentsMap[targetId].orEmpty() + newComment
+                    userComments = listOf(newComment) + userComments
+                }
+            }
+        )
+    }
+
+    activeStoryViewer?.let { (storyList, startIndex) ->
+        StoryViewerDialog(
+            stories = storyList,
+            initialIndex = startIndex,
+            onDismiss = { activeStoryViewer = null },
+            onSendReply = { story, replyText ->
+                val peer = allProfiles.firstOrNull { it.userId == story.userId }
+                    ?: UserProfile(
+                        userId = story.userId,
+                        username = story.authorUsername,
+                        fullName = story.authorUsername,
+                        avatarData = story.authorAvatar
+                    )
+                sendLocalDm(peer, "Replied to your story: $replyText")
+                toastMessage = "Reply sent to @${peer.username}"
+                activeStoryViewer = null
+            }
+        )
+    }
+}

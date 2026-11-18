@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,11 +58,14 @@ import com.example.ui.theme.LocalStarMaxColors
 
 @Composable
 fun AuthScreen(
-    onAuthSuccess: () -> Unit
+    onAuthSuccess: () -> Unit,
+    onEnterDemoMode: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(context) {
+        runCatching { CredentialManager.create(context) }.getOrNull()
+    }
     val extended = LocalStarMaxColors.current
 
     var isLoading by remember { mutableStateOf(false) }
@@ -221,7 +225,22 @@ fun AuthScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+                if (onEnterDemoMode != null) {
+                    TextButton(
+                        onClick = onEnterDemoMode,
+                        modifier = Modifier.testTag("enter_demo_mode_button")
+                    ) {
+                        Text(
+                            text = if (credentialManager == null) {
+                                "Continue in Offline Demo Mode"
+                            } else {
+                                "Explore Local Preview"
+                            },
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
                 Text(
                     text = "Synced securely with Cloud Firestore",
                     style = MaterialTheme.typography.labelSmall,

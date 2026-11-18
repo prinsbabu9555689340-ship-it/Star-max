@@ -170,18 +170,21 @@ fun ReelsScreen(
     }
 }
 
-private fun resolveReelUri(context: Context, rawUri: String): Uri {
-    if (rawUri.startsWith("raw:")) {
-        val name = rawUri.removePrefix("raw:")
-        val resId = when (name) {
-            "reel_neon_tokyo" -> R.raw.reel_neon_tokyo
-            "reel_amalfi_sunset" -> R.raw.reel_amalfi_sunset
-            "reel_alpine_aurora" -> R.raw.reel_alpine_aurora
-            else -> R.raw.reel_neon_tokyo
+private fun resolveReelUri(context: Context, rawUri: String): Uri? {
+    return runCatching {
+        if (rawUri.startsWith("raw:")) {
+            val name = rawUri.removePrefix("raw:")
+            val resId = when (name) {
+                "reel_neon_tokyo" -> R.raw.reel_neon_tokyo
+                "reel_amalfi_sunset" -> R.raw.reel_amalfi_sunset
+                "reel_alpine_aurora" -> R.raw.reel_alpine_aurora
+                else -> R.raw.reel_neon_tokyo
+            }
+            Uri.parse("android.resource://${context.packageName}/$resId")
+        } else {
+            rawUri.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
         }
-        return Uri.parse("android.resource://${context.packageName}/$resId")
-    }
-    return Uri.parse(rawUri)
+    }.getOrNull()
 }
 
 @OptIn(UnstableApi::class)
@@ -209,19 +212,22 @@ private fun ReelPage(
     val resolvedUri = remember(reel.videoUri) { resolveReelUri(context, reel.videoUri) }
 
     val exoPlayer = remember(reel.id, resolvedUri) {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_ONE
-            setMediaItem(MediaItem.fromUri(resolvedUri))
-            prepare()
-        }
+        val uri = resolvedUri ?: return@remember null
+        runCatching {
+            ExoPlayer.Builder(context).build().apply {
+                repeatMode = Player.REPEAT_MODE_ONE
+                setMediaItem(MediaItem.fromUri(uri))
+                prepare()
+            }
+        }.getOrNull()
     }
 
-    LaunchedEffect(isPlayingPage, userPaused) {
-        exoPlayer.playWhenReady = isPlayingPage && !userPaused
+    LaunchedEffect(exoPlayer, isPlayingPage, userPaused) {
+        exoPlayer?.playWhenReady = isPlayingPage && !userPaused
     }
 
-    LaunchedEffect(isMuted) {
-        exoPlayer.volume = if (isMuted) 0f else 1f
+    LaunchedEffect(exoPlayer, isMuted) {
+        exoPlayer?.volume = if (isMuted) 0f else 1f
     }
 
     LaunchedEffect(showPlayPauseFeedback) {
@@ -232,6 +238,11 @@ private fun ReelPage(
     }
 
     DisposableEffect(exoPlayer) {
+        val player = exoPlayer
+        if (player == null) {
+            playbackFailed = true
+            return@DisposableEffect onDispose {}
+        }
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 isVideoRendered = true
@@ -242,10 +253,12 @@ private fun ReelPage(
                 playbackFailed = true
             }
         }
-        exoPlayer.addListener(listener)
+        player.addListener(listener)
         onDispose {
-            exoPlayer.removeListener(listener)
-            exoPlayer.release()
+            runCatching {
+                player.removeListener(listener)
+                player.release()
+            }
         }
     }
 
@@ -257,10 +270,13 @@ private fun ReelPage(
                 showPlayPauseFeedback = true
             }
     ) {
-        if (!playbackFailed) {
+        if (exoPlayer != null && !playbackFailed) {
             AndroidView(
                 factory = { ctx ->
-                    (LayoutInflater.from(ctx).inflate(R.layout.reel_player_view, null) as PlayerView).apply {
+                    val inflated = runCatching {
+                        LayoutInflater.from(ctx).inflate(R.layout.reel_player_view, null) as? PlayerView
+                    }.getOrNull()
+                    (inflated ?: PlayerView(ctx).apply { useController = false }).apply {
                         player = exoPlayer
                     }
                 },
@@ -465,9 +481,11 @@ private fun ReelPage(
 }
 
 private fun shareReel(context: Context, reel: Reel) {
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, "Watch @${reel.authorUsername}'s Reel on Star Max: ${reel.caption}")
+    runCatching {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "Watch @${reel.authorUsername}'s Reel on Star Max: ${reel.caption}")
+        }
+        context.startActivity(Intent.createChooser(intent, "Share Reel"))
     }
-    context.startActivity(Intent.createChooser(intent, "Share Reel"))
 }

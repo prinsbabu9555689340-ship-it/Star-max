@@ -39,39 +39,52 @@ fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 
 fun attemptAutoSignIn(
     context: Context,
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     onAuthSuccess: () -> Unit,
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
-    if (Firebase.auth.currentUser != null) {
+    val auth = runCatching { Firebase.auth }.getOrNull() ?: run {
+        onUnauthenticated()
+        return
+    }
+    if (auth.currentUser != null) {
         onAuthSuccess()
+        return
+    }
+    if (credentialManager == null) {
+        onUnauthenticated()
         return
     }
     val clientId = resolveDefaultWebClientId(context) ?: run {
         onUnauthenticated()
         return
     }
-    val googleIdOption = GetGoogleIdOption.Builder()
-        .setFilterByAuthorizedAccounts(true)
-        .setServerClientId(clientId)
-        .setAutoSelectEnabled(true)
-        .build()
-    val request = GetCredentialRequest.Builder()
-        .addCredentialOption(googleIdOption)
-        .build()
+    val request = runCatching {
+        val googleIdOption = GetGoogleIdOption.Builder()
+            .setFilterByAuthorizedAccounts(true)
+            .setServerClientId(clientId)
+            .setAutoSelectEnabled(true)
+            .build()
+        GetCredentialRequest.Builder()
+            .addCredentialOption(googleIdOption)
+            .build()
+    }.getOrNull() ?: run {
+        onUnauthenticated()
+        return
+    }
 
     scope.launch {
         try {
             val cred = credentialManager.getCredential(context, request).credential
             if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+                auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
                 onAuthSuccess()
             } else {
                 onUnauthenticated()
             }
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             onUnauthenticated()
         }
     }
@@ -79,21 +92,34 @@ fun attemptAutoSignIn(
 
 fun onGoogleSignInClicked(
     context: Context,
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     onAuthSuccess: () -> Unit,
     onAuthError: (String) -> Unit,
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
+    val auth = runCatching { Firebase.auth }.getOrNull() ?: run {
+        onAuthError("Firebase Authentication is not configured in this build.")
+        return
+    }
+    if (credentialManager == null) {
+        onAuthError("Google Sign-In is unavailable on this device.")
+        return
+    }
     val clientId = resolveDefaultWebClientId(context) ?: run {
         onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
         return
     }
 
-    val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-    val request = GetCredentialRequest.Builder()
-        .addCredentialOption(signInOption)
-        .build()
+    val request = runCatching {
+        val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+        GetCredentialRequest.Builder()
+            .addCredentialOption(signInOption)
+            .build()
+    }.getOrElse { err ->
+        onAuthError(err.localizedMessage ?: "Unable to initialize Google Sign-In.")
+        return
+    }
 
     scope.launch {
         try {
@@ -104,7 +130,7 @@ fun onGoogleSignInClicked(
             val cred = credentialManager.getCredential(activityContext, request).credential
             if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+                auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
                 onAuthSuccess()
             } else {
                 onAuthError("Unexpected credential type returned")
@@ -112,15 +138,15 @@ fun onGoogleSignInClicked(
         } catch (e: GetCredentialCancellationException) {
             Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
             onAuthCancelled()
-        } catch (e: Exception) {
-            Log.e(TAG, "Google Sign-In failed", e)
-            onAuthError(e.localizedMessage ?: "Sign in failed. Please try again.")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Google Sign-In failed", t)
+            onAuthError(t.localizedMessage ?: "Sign in failed. Please try again.")
         }
     }
 }
 
 fun signOut(
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     scope: CoroutineScope,
     onBeforeFirebaseSignOut: () -> Unit = {},
     onSignOutComplete: () -> Unit = {}
@@ -129,11 +155,11 @@ fun signOut(
         withContext(NonCancellable) {
             try {
                 onBeforeFirebaseSignOut()
-                credentialManager.clearCredentialState(ClearCredentialStateRequest())
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to clear credential state: ${e.message}")
+                credentialManager?.clearCredentialState(ClearCredentialStateRequest())
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed to clear credential state: ${t.message}")
             } finally {
-                Firebase.auth.signOut()
+                runCatching { Firebase.auth.signOut() }
                 onSignOutComplete()
             }
         }
@@ -142,11 +168,11 @@ fun signOut(
 
 @SuppressLint("DiscouragedApi")
 private fun resolveDefaultWebClientId(context: Context): String? {
-    val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-    if (resId == 0) return null
     return try {
+        val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        if (resId == 0) return null
         context.getString(resId).takeIf { it.isNotBlank() }
-    } catch (_: Exception) {
+    } catch (_: Throwable) {
         null
     }
 }

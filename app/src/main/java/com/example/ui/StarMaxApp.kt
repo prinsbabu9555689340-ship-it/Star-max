@@ -78,11 +78,14 @@ import com.example.ui.screens.SettingsAndActivityScreen
 import com.example.ui.screens.StoryViewerDialog
 import com.example.ui.theme.StarMaxTheme
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.isActive
 
 private enum class BottomTab(
@@ -107,24 +110,85 @@ private sealed interface OverlayRoute {
     data class UserDetail(val userId: String) : OverlayRoute
 }
 
-@Composable
-fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
-    val context = LocalContext.current
-    val themePreferences = remember(context) { ThemePreferences(context.applicationContext) }
-    val persistedTheme by themePreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+private data class ResolvedFirebaseServices(
+    val auth: FirebaseAuth,
+    val db: FirebaseFirestore
+)
 
-    StarMaxTheme(themeMode = persistedTheme) {
-        val user = currentUser
-        if (user == null) {
-            AuthScreen(onAuthSuccess = {})
+private fun resolveFirebaseServices(
+    context: android.content.Context,
+    authOverride: FirebaseAuth?
+): ResolvedFirebaseServices? {
+    return try {
+        val appContext = context.applicationContext ?: context
+        val hasFirebaseApp = FirebaseApp.getApps(appContext).isNotEmpty() ||
+            runCatching { FirebaseApp.initializeApp(appContext) != null }.getOrDefault(false)
+        if (!hasFirebaseApp && authOverride == null) {
+            return null
+        }
+        val auth = authOverride ?: Firebase.auth
+        val databaseId = appContext.getString(R.string.firestore_database_id)
+        if (databaseId.isBlank()) return null
+        val db = FirebaseFirestore.getInstance(databaseId)
+        ResolvedFirebaseServices(auth = auth, db = db)
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+@Composable
+fun AppNavigation(authOverride: FirebaseAuth? = null) {
+    val context = LocalContext.current
+    val themePreferences = remember(context) {
+        runCatching { ThemePreferences(context.applicationContext ?: context) }.getOrNull()
+    }
+    val persistedThemeFlow = remember(themePreferences) {
+        themePreferences?.themeMode?.catch { emit(ThemeMode.SYSTEM) } ?: flowOf(ThemeMode.SYSTEM)
+    }
+    val persistedTheme by persistedThemeFlow.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
+    var fallbackThemeMode by remember { mutableStateOf(ThemeMode.SYSTEM) }
+
+    val firebaseServices = remember(context, authOverride) {
+        resolveFirebaseServices(context, authOverride)
+    }
+    var demoModeActive by remember(firebaseServices) {
+        mutableStateOf(firebaseServices == null)
+    }
+
+    val activeTheme = if (themePreferences != null) persistedTheme else fallbackThemeMode
+
+    StarMaxTheme(themeMode = activeTheme) {
+        if (firebaseServices == null || demoModeActive) {
+            LocalDemoShell(
+                themePreferences = themePreferences,
+                currentThemeMode = activeTheme,
+                canReturnToSignIn = firebaseServices != null,
+                onThemeModeSelected = { fallbackThemeMode = it },
+                onExitDemo = { demoModeActive = false }
+            )
         } else {
-            key(user.uid) {
-                StarMaxAuthenticatedShell(
-                    currentUserId = user.uid,
-                    firebaseUser = user,
-                    themePreferences = themePreferences
+            val userFlow = remember(firebaseServices.auth) {
+                firebaseServices.auth.authStateFlow().catch { emit(null) }
+            }
+            val currentUser by userFlow.collectAsStateWithLifecycle(
+                initialValue = runCatching { firebaseServices.auth.currentUser }.getOrNull()
+            )
+            val user = currentUser
+            if (user == null) {
+                AuthScreen(
+                    onAuthSuccess = {},
+                    onEnterDemoMode = { demoModeActive = true }
                 )
+            } else {
+                key(user.uid) {
+                    StarMaxAuthenticatedShell(
+                        currentUserId = user.uid,
+                        firebaseUser = user,
+                        db = firebaseServices.db,
+                        auth = firebaseServices.auth,
+                        themePreferences = themePreferences ?: ThemePreferences(context.applicationContext ?: context)
+                    )
+                }
             }
         }
     }
@@ -134,23 +198,22 @@ fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
 private fun StarMaxAuthenticatedShell(
     currentUserId: String,
     firebaseUser: FirebaseUser,
+    db: FirebaseFirestore,
+    auth: FirebaseAuth,
     themePreferences: ThemePreferences
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(context) {
+        runCatching { CredentialManager.create(context) }.getOrNull()
+    }
 
     val viewModel: StarMaxViewModel = viewModel(
         key = currentUserId,
         factory = viewModelFactory {
             initializer {
-                val app = checkNotNull(this[APPLICATION_KEY]) {
-                    "APPLICATION_KEY missing from CreationExtras"
-                }
-                val databaseId = app.getString(R.string.firestore_database_id)
-                val db = FirebaseFirestore.getInstance(databaseId)
                 StarMaxViewModel(
-                    repository = SocialRepository(db),
+                    repository = SocialRepository(db = db, auth = auth),
                     themePreferences = themePreferences,
                     currentUserId = currentUserId,
                     firebaseUser = firebaseUser

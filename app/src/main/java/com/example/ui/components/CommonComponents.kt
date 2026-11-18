@@ -142,9 +142,11 @@ fun StarMaxMediaImage(
 
     if (mediaSource.startsWith("data:image")) {
         val bitmap = remember(mediaSource) {
-            MediaUtils.decodeBase64DataUri(mediaSource)?.let { bytes ->
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-            }
+            runCatching {
+                MediaUtils.decodeBase64DataUri(mediaSource)?.let { bytes ->
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                }
+            }.getOrNull()
         }
         if (bitmap != null) {
             Image(
@@ -157,12 +159,14 @@ fun StarMaxMediaImage(
         }
     }
 
-    if (mediaSource.isNotBlank()) {
+    var asyncFailed by remember(mediaSource) { mutableStateOf(false) }
+    if (mediaSource.isNotBlank() && !asyncFailed) {
         AsyncImage(
             model = mediaSource,
             contentDescription = contentDescription,
             modifier = modifier,
-            contentScale = contentScale
+            contentScale = contentScale,
+            onError = { asyncFailed = true }
         )
     } else {
         Box(
@@ -717,11 +721,13 @@ fun sharePostExternally(context: Context, post: Post) {
         append("Check out @${post.authorUsername} on Star Max!")
         if (post.caption.isNotBlank()) append("\n\n${post.caption}")
     }
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, shareBody)
+    runCatching {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, shareBody)
+        }
+        context.startActivity(Intent.createChooser(intent, "Share via Star Max"))
     }
-    context.startActivity(Intent.createChooser(intent, "Share via Star Max"))
 }
 
 fun formatCompactCount(count: Long): String = when {

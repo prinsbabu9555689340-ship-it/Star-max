@@ -35,16 +35,19 @@ private const val TAG = "SocialRepository"
 
 class SocialRepository(
     private val db: FirebaseFirestore,
-    private val auth: FirebaseAuth = Firebase.auth
+    private val auth: FirebaseAuth? = null
 ) {
     constructor(context: Context) : this(
         FirebaseFirestore.getInstance(
             context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        ),
+        null
     )
 
+    private fun resolveAuth(): FirebaseAuth? = auth ?: runCatching { Firebase.auth }.getOrNull()
+
     private fun requireUserId(): String {
-        return auth.currentUser?.uid
+        return resolveAuth()?.currentUser?.uid
             ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
     }
 
@@ -55,7 +58,7 @@ class SocialRepository(
                 .firstOrNull()
             if (firestoreError == null && error is CancellationException) throw error
             val exceptionToLog = firestoreError ?: (error as? Exception)
-            if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+            if (exceptionToLog != null && resolveAuth()?.currentUser?.uid == uid) {
                 handleFirestoreError(exceptionToLog, op, path)
             }
             throw error
@@ -343,7 +346,7 @@ class SocialRepository(
             .handleStreamErrors(OperationType.LIST, "users/$uid/sentFollowRequests", uid)
 
     suspend fun updateThemePreference(mode: ThemeMode): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         val path = "users/$uid"
         return try {
             val currentUid = requireUserId()
@@ -363,7 +366,7 @@ class SocialRepository(
     }
 
     suspend fun updateAccountPrivacy(isPrivate: Boolean): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         var path = "users/$uid"
         return try {
             val currentUid = requireUserId()
@@ -395,7 +398,7 @@ class SocialRepository(
         notifyFollowers: Boolean,
         notifyMessages: Boolean
     ): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         val path = "users/$uid"
         return try {
             val currentUid = requireUserId()
@@ -418,7 +421,7 @@ class SocialRepository(
     }
 
     suspend fun saveDailyUsage(usageDate: String, seconds: Long): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: return Result.success(Unit)
+        val uid = resolveAuth()?.currentUser?.uid ?: return Result.success(Unit)
         val path = "users/$uid"
         return try {
             db.collection("users").document(uid).update(
@@ -467,7 +470,7 @@ class SocialRepository(
         website: String,
         avatarData: String?
     ): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         val path = "profiles/$uid"
         return try {
             val currentUid = requireUserId()
@@ -652,7 +655,7 @@ class SocialRepository(
         currentlyLiked: Boolean,
         actor: UserProfile?
     ): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         val path = "users/$uid/likes/$targetId"
         return try {
             val currentUid = requireUserId()
@@ -699,7 +702,7 @@ class SocialRepository(
     }
 
     suspend fun toggleSave(postId: String, currentlySaved: Boolean): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         val path = "users/$uid/saved/$postId"
         return try {
             val currentUid = requireUserId()
@@ -729,7 +732,7 @@ class SocialRepository(
         currentlyRequested: Boolean,
         actor: UserProfile?
     ): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         var path = "users/$uid/following/${targetProfile.userId}"
         return try {
             val currentUid = requireUserId()
@@ -840,7 +843,7 @@ class SocialRepository(
     }
 
     suspend fun approveFollowRequest(request: FollowRequest, actor: UserProfile?): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         var path = "users/$uid/followRequests/${request.requesterId}"
         return try {
             val currentUid = requireUserId()
@@ -875,7 +878,7 @@ class SocialRepository(
     }
 
     suspend fun declineFollowRequest(requesterId: String): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         val path = "users/$uid/followRequests/$requesterId"
         return try {
             val currentUid = requireUserId()
@@ -981,7 +984,7 @@ class SocialRepository(
 
     suspend fun markNotificationRead(notifId: String): Result<Unit> {
         if (notifId.startsWith("sample_")) return Result.success(Unit)
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         val path = "users/$uid/notifications/$notifId"
         return try {
             val currentUid = requireUserId()
@@ -1075,7 +1078,7 @@ class SocialRepository(
     }
 
     suspend fun markConversationRead(convId: String): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: "unauthenticated"
+        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
         val path = "conversations/$convId"
         return try {
             val currentUid = requireUserId()

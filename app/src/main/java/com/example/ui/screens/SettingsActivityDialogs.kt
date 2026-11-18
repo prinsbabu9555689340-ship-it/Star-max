@@ -523,7 +523,7 @@ fun ChangePasswordSheet(
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val currentUser = Firebase.auth.currentUser
+    val currentUser = remember { runCatching { Firebase.auth.currentUser }.getOrNull() }
     val hasPasswordProvider = remember(currentUser) {
         currentUser?.providerData?.any { it.providerId == EmailAuthProvider.PROVIDER_ID } == true
     }
@@ -654,16 +654,21 @@ fun ChangePasswordSheet(
                     Button(
                         onClick = {
                             isBusy = true
-                            Firebase.auth.sendPasswordResetEmail(userEmail)
-                                .addOnSuccessListener {
-                                    isBusy = false
-                                    statusText = "Password setup/reset email sent to $userEmail."
-                                    onShowMessage("Password email sent to $userEmail")
-                                }
-                                .addOnFailureListener { err ->
-                                    isBusy = false
-                                    statusText = err.localizedMessage ?: "Could not send password email."
-                                }
+                            runCatching {
+                                Firebase.auth.sendPasswordResetEmail(userEmail)
+                                    .addOnSuccessListener {
+                                        isBusy = false
+                                        statusText = "Password setup/reset email sent to $userEmail."
+                                        onShowMessage("Password email sent to $userEmail")
+                                    }
+                                    .addOnFailureListener { err ->
+                                        isBusy = false
+                                        statusText = err.localizedMessage ?: "Could not send password email."
+                                    }
+                            }.onFailure { err ->
+                                isBusy = false
+                                statusText = err.localizedMessage ?: "Password reset is unavailable offline."
+                            }
                         },
                         enabled = !isBusy,
                         shape = RoundedCornerShape(12.dp),
