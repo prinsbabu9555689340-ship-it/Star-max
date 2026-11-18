@@ -294,7 +294,7 @@ fun DmInboxScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false)
                                 )
-                                if (friend.verified) {
+                                if (friend.effectiveVerified) {
                                     Spacer(modifier = Modifier.width(2.dp))
                                     VerifiedBadge(size = 11.dp)
                                 }
@@ -364,7 +364,7 @@ fun DmInboxScreen(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
-                                    if (peerProfile.verified) {
+                                    if (peerProfile.effectiveVerified) {
                                         Spacer(modifier = Modifier.width(4.dp))
                                         VerifiedBadge(size = 14.dp)
                                     }
@@ -449,7 +449,7 @@ fun ChatThreadScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false)
                                 )
-                                if (peerProfile.verified) {
+                                if (peerProfile.effectiveVerified) {
                                     Spacer(modifier = Modifier.width(5.dp))
                                     VerifiedBadge(size = 15.dp)
                                 }
@@ -505,7 +505,7 @@ fun ChatThreadScreen(
                             Spacer(modifier = Modifier.height(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(peerProfile.fullName, style = MaterialTheme.typography.titleMedium)
-                                if (peerProfile.verified) {
+                                if (peerProfile.effectiveVerified) {
                                     Spacer(modifier = Modifier.width(5.dp))
                                     VerifiedBadge(size = 15.dp)
                                 }

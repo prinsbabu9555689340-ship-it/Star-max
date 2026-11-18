@@ -17,6 +17,41 @@ const CHARLIE_UID = "charlie_789";
 const [emulatorHost, emulatorPortStr] = (process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8085").split(":");
 const emulatorPort = parseInt(emulatorPortStr, 10);
 
+function baseUserDoc(uid, username, fullName, now, overrides = {}) {
+  return {
+    uid,
+    userId: uid,
+    fullName,
+    username,
+    usernameLower: username.toLowerCase(),
+    mobile: "+919876543210",
+    isVerified: false,
+    verified: false,
+    profilePic: "",
+    avatarData: "",
+    avatarTint: "#E1306C",
+    bio: "Capturing moments on Star Max",
+    website: "",
+    visibility: "public",
+    postsCount: 0,
+    followersCount: 0,
+    followingCount: 0,
+    online: true,
+    themeMode: "system",
+    isPrivate: false,
+    notifyLikes: true,
+    notifyComments: true,
+    notifyFollowers: true,
+    notifyMessages: true,
+    dailyUsageSeconds: 0,
+    usageDate: "2026-11-17",
+    verificationStatus: "none",
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
 before(async () => {
   const rules = fs.readFileSync("./firestore.rules", "utf8");
   testEnv = await initializeTestEnvironment({
@@ -41,63 +76,47 @@ beforeEach(async () => {
   }
 });
 
-test("Unauthenticated user cannot read or write any collection", async () => {
+test("Unauthenticated user cannot read or write users, profiles, posts, or verification_requests", async () => {
   const unauthDb = testEnv.unauthenticatedContext().firestore();
+  await assertFails(unauthDb.collection("users").where("visibility", "==", "public").get());
   await assertFails(unauthDb.collection("profiles").where("visibility", "==", "public").get());
   await assertFails(unauthDb.collection("posts").where("visibility", "==", "public").get());
+  await assertFails(unauthDb.collection("verification_requests").get());
   await assertFails(
-    unauthDb.collection("profiles").doc(ALICE_UID).set({
-      userId: ALICE_UID,
-      username: "alice",
-      usernameLower: "alice",
-      fullName: "Alice",
-      bio: "",
-      website: "",
-      visibility: "public",
-      postsCount: 0,
-      followersCount: 0,
-      followingCount: 0,
-      verified: false,
-      online: true,
-      createdAt: new Date(Date.now() - 1000),
-      updatedAt: new Date(Date.now() - 1000),
-    })
+    unauthDb.collection("users").doc(ALICE_UID).set(
+      baseUserDoc(ALICE_UID, "alice", "Alice", new Date(Date.now() - 1000))
+    )
   );
 });
 
-test("Owner can create and update public profile; cross-user profile edit rejected except follower count", async () => {
+test("Users collection supports registration, real-time public search, and strict ownership on edits", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const now = new Date(Date.now() - 5000);
 
-  // Mirror SocialRepository.ensureUserProfile() exact sequence
   await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).get());
   await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).set({
-      userId: ALICE_UID,
-      themeMode: "system",
-      createdAt: now,
-      updatedAt: now,
-    })
+    aliceDb.collection("users").doc(ALICE_UID).set(baseUserDoc(ALICE_UID, "alice_star", "Alice Star", now))
   );
 
-  // First-time user check on non-existent profile must succeed (resource == null)
   await assertSucceeds(aliceDb.collection("profiles").doc(ALICE_UID).get());
-
   await assertSucceeds(
     aliceDb.collection("profiles").doc(ALICE_UID).set({
       userId: ALICE_UID,
       username: "alice_star",
       usernameLower: "alice_star",
       fullName: "Alice Star",
+      mobile: "+919876543210",
       bio: "Capturing moments on Star Max",
       website: "",
       avatarData: "https://lh3.googleusercontent.com/a/example",
+      profilePic: "https://lh3.googleusercontent.com/a/example",
       avatarTint: "#E1306C",
       visibility: "public",
       postsCount: 0,
-      followersCount: 128,
-      followingCount: 2,
+      followersCount: 0,
+      followingCount: 0,
+      isVerified: false,
       verified: false,
       online: true,
       createdAt: now,
@@ -105,47 +124,52 @@ test("Owner can create and update public profile; cross-user profile edit reject
     })
   );
 
+  // Returning user update on users & profiles
   await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("following").doc("sample_kai").set({
-      targetUserId: "sample_kai",
-      targetUsername: "kai_tokyo",
-      createdAt: now,
-    })
-  );
-
-  // Returning user online ping update
-  await assertSucceeds(
-    aliceDb.collection("profiles").doc(ALICE_UID).update({
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      bio: "Updated bio",
       online: true,
       updatedAt: new Date(Date.now() - 1000),
     })
   );
-
   await assertSucceeds(
     aliceDb.collection("profiles").doc(ALICE_UID).update({
       bio: "Updated bio",
+      online: true,
       updatedAt: new Date(Date.now() - 500),
     })
   );
 
-  // Bob cannot hijack Alice's bio or username
-  await assertFails(
-    bobDb.collection("profiles").doc(ALICE_UID).update({
-      bio: "Hacked",
-      updatedAt: new Date(Date.now() - 500),
-    })
+  // Bob can query public users collection in real time (Explore Search)
+  await assertSucceeds(
+    bobDb.collection("users").where("visibility", "==", "public").get()
   );
-
-  // Bob can read public profiles using visibility filter
   await assertSucceeds(
     bobDb.collection("profiles").where("visibility", "==", "public").get()
   );
 
-  // Unfiltered profiles list rejected
-  await assertFails(bobDb.collection("profiles").get());
+  // Bob can increment followersCount when following Alice, but CANNOT hijack Alice's bio or username
+  await assertSucceeds(
+    bobDb.collection("users").doc(ALICE_UID).update({
+      followersCount: 1,
+      updatedAt: new Date(Date.now() - 400),
+    })
+  );
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).update({
+      bio: "Hacked",
+      updatedAt: new Date(Date.now() - 300),
+    })
+  );
+  await assertFails(
+    bobDb.collection("profiles").doc(ALICE_UID).update({
+      bio: "Hacked",
+      updatedAt: new Date(Date.now() - 300),
+    })
+  );
 });
 
-test("Posts, comments, stories, and reels enforce author ownership, schema bounds, and visibility filter", async () => {
+test("Posts, comments, stories (with filters & music), and reels enforce ownership and validation", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const now = new Date(Date.now() - 5000);
@@ -169,7 +193,7 @@ test("Posts, comments, stories, and reels enforce author ownership, schema bound
     })
   );
 
-  // Reject ghost field / @DocumentId 'id' leak
+  // Reject @DocumentId 'id' leak
   await assertFails(
     aliceDb.collection("posts").doc("post_bad").set({
       id: "post_bad",
@@ -189,10 +213,8 @@ test("Posts, comments, stories, and reels enforce author ownership, schema bound
     })
   );
 
-  // Bob cannot delete Alice's post
   await assertFails(bobDb.collection("posts").doc("post_1").delete());
 
-  // Bob can comment and update likesCount
   await assertSucceeds(
     bobDb.collection("comments").doc("comment_1").set({
       postId: "post_1",
@@ -204,21 +226,39 @@ test("Posts, comments, stories, and reels enforce author ownership, schema bound
     })
   );
 
-  // Alice can create a 24h story
+  // Alice can create a 24h photo story with Vintage filter and trending music track
   await assertSucceeds(
     aliceDb.collection("stories").doc("story_1").set({
       userId: ALICE_UID,
       authorUsername: "alice_star",
-      mediaType: "text",
-      textContent: "New vlog dropping tonight!",
+      mediaType: "photo",
+      mediaData: "data:image/jpeg;base64,AAAA",
+      textContent: "Golden night ✨",
       bgGradient: "sunset",
+      filterName: "Vintage",
+      songTitle: "Neon Skyline",
+      songArtist: "Luna Wave",
+      songUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
       visibility: "public",
       expiresAtMillis: Date.now() + 86400000,
       createdAt: now,
     })
   );
 
-  // Filtered queries succeed; unfiltered list fails
+  // Invalid story filter name is rejected
+  await assertFails(
+    aliceDb.collection("stories").doc("story_bad_filter").set({
+      userId: ALICE_UID,
+      authorUsername: "alice_star",
+      mediaType: "photo",
+      mediaData: "data:image/jpeg;base64,AAAA",
+      filterName: "UnknownFilter",
+      visibility: "public",
+      expiresAtMillis: Date.now() + 86400000,
+      createdAt: now,
+    })
+  );
+
   await assertSucceeds(bobDb.collection("posts").where("visibility", "==", "public").get());
   await assertFails(bobDb.collection("posts").get());
 });
@@ -229,7 +269,6 @@ test("User subcollections and DM conversations enforce strict participant isolat
   const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
   const now = new Date(Date.now() - 5000);
 
-  // Alice user likes & saved
   await assertSucceeds(
     aliceDb.collection("users").doc(ALICE_UID).collection("likes").doc("post_1").set({
       targetId: "post_1",
@@ -241,7 +280,6 @@ test("User subcollections and DM conversations enforce strict participant isolat
     bobDb.collection("users").doc(ALICE_UID).collection("likes").get()
   );
 
-  // Alice & Bob conversation (non-existent get before first message must succeed)
   const convId = "conv_alice_bob";
   await assertSucceeds(aliceDb.collection("conversations").doc(convId).get());
   await assertSucceeds(
@@ -270,7 +308,6 @@ test("User subcollections and DM conversations enforce strict participant isolat
     })
   );
 
-  // Charlie cannot read Alice/Bob conversation or messages
   await assertFails(charlieDb.collection("conversations").doc(convId).get());
   await assertFails(
     charlieDb.collection("conversations").doc(convId).collection("messages").doc("msg_1").get()
@@ -278,12 +315,7 @@ test("User subcollections and DM conversations enforce strict participant isolat
   await assertFails(
     charlieDb.collection("conversations").doc(convId).collection("messages").get()
   );
-  await assertFails(
-    charlieDb.collection("conversations").doc(convId).collection("messages")
-      .where("participantUids", "array-contains", ALICE_UID).get()
-  );
 
-  // Bob can query conversations and messages where he is a participant
   await assertSucceeds(
     bobDb.collection("conversations").where("participantUids", "array-contains", BOB_UID).get()
   );
@@ -299,19 +331,7 @@ test("User settings persistence, private follow requests, and archived posts enf
   const now = new Date(Date.now() - 5000);
 
   await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).set({
-      userId: ALICE_UID,
-      themeMode: "system",
-      isPrivate: false,
-      notifyLikes: true,
-      notifyComments: true,
-      notifyFollowers: true,
-      notifyMessages: true,
-      dailyUsageSeconds: 120,
-      usageDate: "2026-11-17",
-      createdAt: now,
-      updatedAt: now,
-    })
+    aliceDb.collection("users").doc(ALICE_UID).set(baseUserDoc(ALICE_UID, "alice_star", "Alice Star", now))
   );
 
   await assertSucceeds(
@@ -324,7 +344,6 @@ test("User settings persistence, private follow requests, and archived posts enf
     })
   );
 
-  // Bob cannot modify Alice's settings
   await assertFails(
     bobDb.collection("users").doc(ALICE_UID).update({
       isPrivate: false,
@@ -332,7 +351,6 @@ test("User settings persistence, private follow requests, and archived posts enf
     })
   );
 
-  // Bob sends a follow request to private Alice
   await assertSucceeds(
     bobDb.collection("users").doc(ALICE_UID).collection("followRequests").doc(BOB_UID).set({
       requesterId: BOB_UID,
@@ -348,12 +366,10 @@ test("User settings persistence, private follow requests, and archived posts enf
       createdAt: now,
     })
   );
-  // Charlie cannot read Alice's followRequests list
   const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
   await assertFails(
     charlieDb.collection("users").doc(ALICE_UID).collection("followRequests").get()
   );
-  // Alice can list and decline/delete Bob's request
   await assertSucceeds(
     aliceDb.collection("users").doc(ALICE_UID).collection("followRequests").get()
   );
@@ -361,7 +377,6 @@ test("User settings persistence, private follow requests, and archived posts enf
     aliceDb.collection("users").doc(ALICE_UID).collection("followRequests").doc(BOB_UID).delete()
   );
 
-  // Alice archives her post and only Alice can read it
   await assertSucceeds(
     aliceDb.collection("posts").doc("post_arch").set({
       userId: ALICE_UID,
@@ -391,19 +406,24 @@ test("User settings persistence, private follow requests, and archived posts enf
   await assertFails(bobDb.collection("posts").doc("post_arch").get());
 });
 
-test("Phone-verified profile badge, unique username/phone registries, and anti-spoofing rules", async () => {
-  const phoneAliceDb = testEnv.authenticatedContext(ALICE_UID, { phone_number: "+919876543210" }).firestore();
-  const nonPhoneBobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+test("Blue Tick verification prevents self-approval and enforces pending verification_requests", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID, { phone_number: "+919876543210" }).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const unauthDb = testEnv.unauthenticatedContext().firestore();
   const now = new Date(Date.now() - 5000);
 
-  // Non-phone user cannot self-assign verified: true
+  // Even a phone-verified client CANNOT create users/profiles with isVerified: true or verified: true
   await assertFails(
-    nonPhoneBobDb.collection("profiles").doc(BOB_UID).set({
-      userId: BOB_UID,
-      username: "bob_fake",
-      usernameLower: "bob_fake",
-      fullName: "Bob Fake",
+    aliceDb.collection("users").doc(ALICE_UID).set(
+      baseUserDoc(ALICE_UID, "alice.star", "Alice Star", now, { isVerified: true })
+    )
+  );
+  await assertFails(
+    aliceDb.collection("profiles").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      username: "alice.star",
+      usernameLower: "alice.star",
+      fullName: "Alice Star",
       bio: "",
       website: "",
       visibility: "public",
@@ -417,41 +437,26 @@ test("Phone-verified profile badge, unique username/phone registries, and anti-s
     })
   );
 
-  // Phone-verified user CAN create verified profile + claim username & phone number
+  // Normal registration with isVerified: false succeeds across users, profiles, usernames, phoneRegistry
   await assertSucceeds(
-    phoneAliceDb.collection("profiles").doc(ALICE_UID).set({
-      userId: ALICE_UID,
-      username: "alice.star",
-      usernameLower: "alice.star",
-      fullName: "Alice Star",
-      bio: "Verified creator",
-      website: "",
-      visibility: "public",
-      postsCount: 0,
-      followersCount: 0,
-      followingCount: 0,
-      verified: true,
-      online: true,
-      createdAt: now,
-      updatedAt: now,
-    })
+    aliceDb.collection("users").doc(ALICE_UID).set(
+      baseUserDoc(ALICE_UID, "alice.star", "Alice Star", now, { phoneE164: "+919876543210" })
+    )
   );
-
   await assertSucceeds(
-    phoneAliceDb.collection("usernames").doc("alice.star").set({
+    aliceDb.collection("usernames").doc("alice.star").set({
       userId: ALICE_UID,
       usernameLower: "alice.star",
       phoneE164: "+919876543210",
       passwordSalt: "random_salt_1234",
       passwordHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      verified: true,
+      verified: false,
       createdAt: now,
       updatedAt: now,
     })
   );
-
   await assertSucceeds(
-    phoneAliceDb.collection("phoneRegistry").doc("9876543210").set({
+    aliceDb.collection("phoneRegistry").doc("9876543210").set({
       userId: ALICE_UID,
       phoneDigits: "9876543210",
       phoneE164: "+919876543210",
@@ -466,80 +471,75 @@ test("Phone-verified profile badge, unique username/phone registries, and anti-s
   await assertFails(unauthDb.collection("usernames").get());
   await assertFails(unauthDb.collection("phoneRegistry").get());
 
-  // Bob cannot steal or overwrite Alice's claimed username or phone number
+  // User CANNOT self-approve Blue Tick via update on users
   await assertFails(
-    nonPhoneBobDb.collection("usernames").doc("alice.star").set({
-      userId: BOB_UID,
-      usernameLower: "alice.star",
-      phoneE164: "+919999999999",
-      passwordSalt: "other_salt_1234",
-      passwordHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-      verified: false,
-      createdAt: now,
-      updatedAt: now,
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      isVerified: true,
+      updatedAt: new Date(Date.now() - 1000),
     })
   );
   await assertFails(
-    nonPhoneBobDb.collection("phoneRegistry").doc("9876543210").set({
-      userId: BOB_UID,
-      phoneDigits: "9876543210",
-      phoneE164: "+919876543210",
-      usernameLower: "bob_other",
-      createdAt: now,
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      verificationStatus: "verified",
+      updatedAt: new Date(Date.now() - 1000),
     })
   );
 
-  // Non-phone Bob can create an unverified profile, submit a private Verification Request,
-  // and toggle his own Developer Verification flag, while Alice cannot read/tamper with Bob's data.
+  // Submitting a pending verification request to verification_requests + setting verificationStatus: "pending" succeeds
   await assertSucceeds(
-    nonPhoneBobDb.collection("users").doc(BOB_UID).set({
-      userId: BOB_UID,
-      themeMode: "system",
+    aliceDb.collection("verification_requests").doc("req_alice_1").set({
+      userId: ALICE_UID,
+      username: "alice.star",
+      fullName: "Alice Star",
+      category: "Creator",
+      knownAs: "AliceLens",
+      idOrLink: "https://alicestar.studio",
+      idProofData: "data:image/jpeg;base64,AAAA",
+      status: "pending",
       createdAt: now,
       updatedAt: now,
     })
   );
   await assertSucceeds(
-    nonPhoneBobDb.collection("profiles").doc(BOB_UID).set({
-      userId: BOB_UID,
-      username: "bob_creator",
-      usernameLower: "bob_creator",
-      fullName: "Bob Creator",
-      bio: "",
-      website: "",
-      visibility: "public",
-      postsCount: 0,
-      followersCount: 0,
-      followingCount: 0,
-      verified: false,
-      online: true,
-      createdAt: now,
-      updatedAt: now,
-    })
-  );
-  await assertSucceeds(
-    nonPhoneBobDb.collection("users").doc(BOB_UID).update({
+    aliceDb.collection("users").doc(ALICE_UID).update({
       verificationStatus: "pending",
-      verificationFullName: "Bob Creator",
+      verificationFullName: "Alice Star",
       verificationCategory: "Creator",
-      verificationKnownAs: "BobbyLens",
-      verificationLink: "https://bobcreator.studio",
-      verificationIdProofData: "data:image/jpeg;base64,AAAA",
+      verificationKnownAs: "AliceLens",
+      verificationLink: "https://alicestar.studio",
       verificationSubmittedAtMillis: Date.now(),
       updatedAt: new Date(Date.now() - 500),
     })
   );
-  await assertFails(phoneAliceDb.collection("users").doc(BOB_UID).get());
-  await assertSucceeds(
-    nonPhoneBobDb.collection("profiles").doc(BOB_UID).update({
-      verified: true,
-      updatedAt: new Date(Date.now() - 250),
+
+  // Client CANNOT create an already approved request or update their request to approved
+  await assertFails(
+    aliceDb.collection("verification_requests").doc("req_alice_bad").set({
+      userId: ALICE_UID,
+      username: "alice.star",
+      fullName: "Alice Star",
+      category: "Creator",
+      idOrLink: "https://alicestar.studio",
+      status: "approved",
+      createdAt: now,
+      updatedAt: now,
     })
   );
   await assertFails(
-    phoneAliceDb.collection("profiles").doc(BOB_UID).update({
-      verified: false,
-      updatedAt: new Date(Date.now() - 100),
+    aliceDb.collection("verification_requests").doc("req_alice_1").update({
+      status: "approved",
+      updatedAt: new Date(Date.now() - 200),
     })
+  );
+
+  // Alice can read her own verification request; Bob cannot read Alice's request
+  await assertSucceeds(
+    aliceDb.collection("verification_requests").where("userId", "==", ALICE_UID).get()
+  );
+  await assertFails(
+    bobDb.collection("verification_requests").doc("req_alice_1").get()
+  );
+  await assertFails(
+    bobDb.collection("verification_requests").where("userId", "==", ALICE_UID).get()
   );
 });

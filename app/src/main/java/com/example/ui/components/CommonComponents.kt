@@ -74,6 +74,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -127,6 +128,7 @@ fun StarMaxMediaImage(
     contentDescription: String?,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    colorFilter: ColorFilter? = null,
     fallbackText: String = "S"
 ) {
     val resId = SampleData.drawableRegistry[mediaSource]
@@ -135,7 +137,8 @@ fun StarMaxMediaImage(
             painter = painterResource(id = resId),
             contentDescription = contentDescription,
             modifier = modifier,
-            contentScale = contentScale
+            contentScale = contentScale,
+            colorFilter = colorFilter
         )
         return
     }
@@ -153,7 +156,8 @@ fun StarMaxMediaImage(
                 bitmap = bitmap,
                 contentDescription = contentDescription,
                 modifier = modifier,
-                contentScale = contentScale
+                contentScale = contentScale,
+                colorFilter = colorFilter
             )
             return
         }
@@ -166,6 +170,7 @@ fun StarMaxMediaImage(
             contentDescription = contentDescription,
             modifier = modifier,
             contentScale = contentScale,
+            colorFilter = colorFilter,
             onError = { asyncFailed = true }
         )
     } else {
@@ -261,7 +266,7 @@ fun PostCard(
     isSaved: Boolean,
     isFollowingAuthor: Boolean,
     isOwnPost: Boolean,
-    isAuthorVerified: Boolean = post.userId.startsWith("sample_") && post.userId != "sample_elena",
+    isAuthorVerified: Boolean = false,
     onLikeToggle: () -> Unit,
     onDoubleTapLike: () -> Unit,
     onCommentClick: () -> Unit,
@@ -362,7 +367,7 @@ fun PostCard(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-            } else if (isOwnPost && onArchiveToggle != null && !post.id.startsWith("sample_")) {
+            } else if (isOwnPost && onArchiveToggle != null) {
                 Box {
                     IconButton(onClick = { showMoreMenu = true }) {
                         Icon(
@@ -528,8 +533,7 @@ fun PostCard(
                 .padding(horizontal = 14.dp)
                 .padding(bottom = 14.dp)
         ) {
-            val effectiveLikes = (post.likesCount + if (isLiked && post.id.startsWith("sample_")) 1L else 0L)
-                .coerceAtLeast(0L)
+            val effectiveLikes = post.likesCount.coerceAtLeast(0L)
             Text(
                 text = "${formatCompactCount(effectiveLikes)} likes",
                 style = MaterialTheme.typography.titleSmall,

@@ -12,20 +12,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -40,11 +46,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import com.example.data.model.Story
+import com.example.data.model.StoryFilter
 import com.example.ui.components.StarMaxMediaImage
 import com.example.ui.components.UserAvatar
 import com.example.ui.components.formatRelativeTime
@@ -66,12 +80,54 @@ fun StoryViewerDialog(
         onDismiss()
         return
     }
+    val context = LocalContext.current
     var currentIndex by remember { mutableIntStateOf(initialIndex.coerceIn(0, stories.lastIndex)) }
     var progress by remember(currentIndex) { mutableFloatStateOf(0f) }
     var isPaused by remember { mutableStateOf(false) }
+    var isMuted by remember { mutableStateOf(false) }
     var replyText by remember { mutableStateOf("") }
 
     val story = stories[currentIndex]
+    val activeFilter = remember(story.filterName) { StoryFilter.fromId(story.filterName) }
+
+    val songPlayer = remember(story.id, story.songUrl) {
+        if (story.songUrl.isNotBlank()) {
+            runCatching {
+                ExoPlayer.Builder(context).build().apply {
+                    repeatMode = Player.REPEAT_MODE_ONE
+                    setMediaItem(MediaItem.fromUri(story.songUrl))
+                    prepare()
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+    }
+
+    LaunchedEffect(songPlayer, isPaused) {
+        songPlayer?.playWhenReady = !isPaused
+    }
+
+    LaunchedEffect(songPlayer, isMuted) {
+        songPlayer?.volume = if (isMuted) 0f else 1f
+    }
+
+    DisposableEffect(songPlayer) {
+        val player = songPlayer ?: return@DisposableEffect onDispose {}
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                // Keep Story viewable silently if stream cannot load
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            runCatching {
+                player.removeListener(listener)
+                player.stop()
+                player.release()
+            }
+        }
+    }
 
     LaunchedEffect(currentIndex, isPaused) {
         val stepMillis = 50L
@@ -110,7 +166,8 @@ fun StoryViewerDialog(
                     mediaSource = story.mediaData,
                     contentDescription = "Story by ${story.authorUsername}",
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
+                    contentScale = ContentScale.Crop,
+                    colorFilter = activeFilter.toColorFilter()
                 )
                 Box(
                     modifier = Modifier
@@ -231,12 +288,56 @@ fun StoryViewerDialog(
                         color = Color.White.copy(alpha = 0.75f)
                     )
                     Spacer(modifier = Modifier.weight(1f))
+                    if (story.songUrl.isNotBlank()) {
+                        IconButton(
+                            onClick = { isMuted = !isMuted },
+                            modifier = Modifier.testTag("story_music_mute_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = if (isMuted) "Unmute story music" else "Mute story music",
+                                tint = Color.White
+                            )
+                        }
+                    }
                     IconButton(onClick = onDismiss) {
                         Icon(
                             imageVector = Icons.Filled.Close,
                             contentDescription = "Close story",
                             tint = Color.White
                         )
+                    }
+                }
+                if (story.songTitle.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.testTag("story_viewer_music_sticker")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.MusicNote,
+                                contentDescription = null,
+                                tint = StarMaxAmber,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = if (story.songArtist.isNotBlank()) {
+                                    "${story.songTitle} • ${story.songArtist}"
+                                } else {
+                                    story.songTitle
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }

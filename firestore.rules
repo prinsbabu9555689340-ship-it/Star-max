@@ -26,13 +26,6 @@ service cloud.firestore {
       return digits is string && digits.size() == 10 && digits.matches('^[0-9]{10}$');
     }
 
-    function hasVerifiedPhoneClaim() {
-      return isSignedIn() &&
-             ('phone_number' in request.auth.token) &&
-             request.auth.token.phone_number is string &&
-             request.auth.token.phone_number.size() >= 10;
-    }
-
     function incoming() {
       return request.resource.data;
     }
@@ -47,6 +40,23 @@ service cloud.firestore {
 
     function isValidUserAccount(data) {
       return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.uid is string && data.uid == data.userId &&
+             data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 60 &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 30 &&
+             data.usernameLower is string && data.usernameLower.size() >= 2 && data.usernameLower.size() <= 30 &&
+             data.mobile is string && data.mobile.size() <= 20 &&
+             data.isVerified is bool &&
+             (!('verified' in data) || data.verified is bool) &&
+             data.profilePic is string && data.profilePic.size() <= 350000 &&
+             (!('avatarData' in data) || (data.avatarData is string && data.avatarData.size() <= 350000)) &&
+             (!('avatarTint' in data) || (data.avatarTint is string && data.avatarTint.size() <= 20)) &&
+             (!('bio' in data) || (data.bio is string && data.bio.size() <= 200)) &&
+             (!('website' in data) || (data.website is string && data.website.size() <= 150)) &&
+             data.visibility == 'public' &&
+             (!('postsCount' in data) || (data.postsCount is int && data.postsCount >= 0)) &&
+             (!('followersCount' in data) || (data.followersCount is int && data.followersCount >= 0)) &&
+             (!('followingCount' in data) || (data.followingCount is int && data.followingCount >= 0)) &&
+             (!('online' in data) || data.online is bool) &&
              data.themeMode in ['system', 'dark', 'light'] &&
              (!('isPrivate' in data) || data.isPrivate is bool) &&
              (!('notifyLikes' in data) || data.notifyLikes is bool) &&
@@ -63,6 +73,20 @@ service cloud.firestore {
              (!('verificationLink' in data) || (data.verificationLink is string && data.verificationLink.size() <= 200)) &&
              (!('verificationIdProofData' in data) || (data.verificationIdProofData is string && data.verificationIdProofData.size() <= 350000)) &&
              (!('verificationSubmittedAtMillis' in data) || (data.verificationSubmittedAtMillis is int && data.verificationSubmittedAtMillis >= 0)) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidVerificationRequest(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 30 &&
+             data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 80 &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 40 &&
+             (!('knownAs' in data) || (data.knownAs is string && data.knownAs.size() <= 80)) &&
+             data.idOrLink is string && data.idOrLink.size() <= 200 &&
+             (!('idProofData' in data) || (data.idProofData is string && data.idProofData.size() <= 350000)) &&
+             (data.idOrLink.size() >= 1 || ('idProofData' in data && data.idProofData.size() >= 1)) &&
+             data.status in ['pending', 'approved', 'rejected'] &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
     }
@@ -91,15 +115,18 @@ service cloud.firestore {
              data.username is string && data.username.size() >= 2 && data.username.size() <= 30 &&
              data.usernameLower is string && data.usernameLower.size() >= 2 && data.usernameLower.size() <= 30 &&
              data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 60 &&
+             (!('mobile' in data) || (data.mobile is string && data.mobile.size() <= 20)) &&
              data.bio is string && data.bio.size() <= 200 &&
              data.website is string && data.website.size() <= 150 &&
              (!('avatarData' in data) || (data.avatarData is string && data.avatarData.size() <= 350000)) &&
+             (!('profilePic' in data) || (data.profilePic is string && data.profilePic.size() <= 350000)) &&
              (!('avatarTint' in data) || (data.avatarTint is string && data.avatarTint.size() <= 20)) &&
              data.visibility == 'public' &&
              (!('isPrivate' in data) || data.isPrivate is bool) &&
              data.postsCount is int && data.postsCount >= 0 &&
              data.followersCount is int && data.followersCount >= 0 &&
              data.followingCount is int && data.followingCount >= 0 &&
+             (!('isVerified' in data) || data.isVerified is bool) &&
              data.verified is bool &&
              data.online is bool &&
              isValidTimestamp(data.createdAt) &&
@@ -143,6 +170,10 @@ service cloud.firestore {
              (!('mediaData' in data) || (data.mediaData is string && data.mediaData.size() <= 700000)) &&
              (!('textContent' in data) || (data.textContent is string && data.textContent.size() <= 280)) &&
              (!('bgGradient' in data) || (data.bgGradient is string && data.bgGradient.size() <= 40)) &&
+             (!('filterName' in data) || data.filterName in ['Normal', 'Warm', 'Cool', 'Vintage', 'B&W', 'Vivid']) &&
+             (!('songTitle' in data) || (data.songTitle is string && data.songTitle.size() <= 100)) &&
+             (!('songArtist' in data) || (data.songArtist is string && data.songArtist.size() <= 80)) &&
+             (!('songUrl' in data) || (data.songUrl is string && data.songUrl.size() <= 500)) &&
              data.visibility == 'public' &&
              data.expiresAtMillis is int && data.expiresAtMillis > 0 &&
              isValidTimestamp(data.createdAt);
@@ -226,18 +257,42 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if isOwner(userId) && isValidId(userId);
-      allow list: if isOwner(userId);
+      allow get: if isSignedIn() && isValidId(userId) &&
+                    (isOwner(userId) || resource == null || resource.data.visibility == 'public');
+      allow list: if isSignedIn() && (isOwner(userId) || resource.data.visibility == 'public');
       allow create: if isOwner(userId) && isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
-                       incoming().keys().hasAll(['userId', 'themeMode', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'verificationStatus', 'verificationFullName', 'verificationCategory', 'verificationKnownAs', 'verificationLink', 'verificationIdProofData', 'verificationSubmittedAtMillis', 'createdAt', 'updatedAt']) &&
+                       incoming().uid == request.auth.uid &&
+                       incoming().isVerified == false &&
+                       (!('verified' in incoming()) || incoming().verified == false) &&
+                       (!('verificationStatus' in incoming()) || incoming().verificationStatus == 'none') &&
+                       incoming().keys().hasAll(['uid', 'userId', 'fullName', 'username', 'usernameLower', 'mobile', 'isVerified', 'profilePic', 'visibility', 'themeMode', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['uid', 'userId', 'fullName', 'username', 'usernameLower', 'mobile', 'isVerified', 'verified', 'profilePic', 'avatarData', 'avatarTint', 'bio', 'website', 'visibility', 'postsCount', 'followersCount', 'followingCount', 'online', 'themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'verificationStatus', 'verificationFullName', 'verificationCategory', 'verificationKnownAs', 'verificationLink', 'verificationIdProofData', 'verificationSubmittedAtMillis', 'createdAt', 'updatedAt']) &&
                        isValidUserAccount(incoming());
-      allow update: if isOwner(userId) && isValidId(userId) &&
-                       incoming().userId == existing().userId &&
-                       incoming().createdAt == existing().createdAt &&
+      allow update: if isSignedIn() && isValidId(userId) &&
                        isValidUserAccount(incoming()) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'verificationStatus', 'verificationFullName', 'verificationCategory', 'verificationKnownAs', 'verificationLink', 'verificationIdProofData', 'verificationSubmittedAtMillis', 'updatedAt']);
+                       incoming().userId == existing().userId &&
+                       incoming().uid == existing().get('uid', existing().userId) &&
+                       incoming().visibility == existing().get('visibility', 'public') &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().isVerified == existing().get('isVerified', false) &&
+                       (!('verified' in incoming()) || incoming().verified == existing().get('verified', false)) &&
+                       (
+                         (isOwner(userId) &&
+                          (!('verificationStatus' in incoming()) ||
+                           incoming().verificationStatus == existing().get('verificationStatus', 'none') ||
+                           (incoming().verificationStatus == 'pending' && existing().get('verificationStatus', 'none') != 'verified')) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'uid', 'fullName', 'username', 'usernameLower', 'mobile', 'profilePic', 'avatarData',
+                            'avatarTint', 'bio', 'website', 'postsCount', 'followingCount', 'online',
+                            'themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers',
+                            'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164',
+                            'verificationStatus', 'verificationFullName', 'verificationCategory',
+                            'verificationKnownAs', 'verificationLink', 'verificationIdProofData',
+                            'verificationSubmittedAtMillis', 'updatedAt'
+                          ])) ||
+                         (incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'updatedAt']))
+                       );
       allow delete: if isOwner(userId) && isValidId(userId);
 
       match /likes/{targetId} {
@@ -319,21 +374,37 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(profileId) &&
                        request.auth.uid == profileId &&
                        incoming().userId == request.auth.uid &&
-                       (!incoming().verified || hasVerifiedPhoneClaim()) &&
+                       incoming().verified == false &&
+                       (!('isVerified' in incoming()) || incoming().isVerified == false) &&
                        incoming().keys().hasAll(['userId', 'username', 'usernameLower', 'fullName', 'bio', 'website', 'visibility', 'postsCount', 'followersCount', 'followingCount', 'verified', 'online', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'username', 'usernameLower', 'fullName', 'bio', 'website', 'avatarData', 'avatarTint', 'visibility', 'isPrivate', 'postsCount', 'followersCount', 'followingCount', 'verified', 'online', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'username', 'usernameLower', 'fullName', 'mobile', 'bio', 'website', 'avatarData', 'profilePic', 'avatarTint', 'visibility', 'isPrivate', 'postsCount', 'followersCount', 'followingCount', 'isVerified', 'verified', 'online', 'createdAt', 'updatedAt']) &&
                        isValidUserProfile(incoming());
       allow update: if isSignedIn() && isValidId(profileId) &&
                        isValidUserProfile(incoming()) &&
                        incoming().userId == existing().userId &&
                        incoming().visibility == existing().visibility &&
                        incoming().createdAt == existing().createdAt &&
+                       incoming().verified == existing().verified &&
+                       (!('isVerified' in incoming()) || incoming().isVerified == existing().get('isVerified', existing().verified)) &&
                        (
                          (request.auth.uid == profileId &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['username', 'usernameLower', 'fullName', 'bio', 'website', 'avatarData', 'avatarTint', 'isPrivate', 'postsCount', 'followingCount', 'verified', 'online', 'updatedAt'])) ||
+                          incoming().diff(existing()).affectedKeys().hasOnly(['username', 'usernameLower', 'fullName', 'mobile', 'bio', 'website', 'avatarData', 'profilePic', 'avatarTint', 'isPrivate', 'postsCount', 'followingCount', 'online', 'updatedAt'])) ||
                          (incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'updatedAt']))
                        );
       allow delete: if isOwner(profileId) && isValidId(profileId);
+    }
+
+    match /verification_requests/{requestId} {
+      allow get: if isSignedIn() && isValidId(requestId) &&
+                    (resource == null || resource.data.userId == request.auth.uid);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(requestId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().status == 'pending' &&
+                       incoming().keys().hasAll(['userId', 'username', 'fullName', 'category', 'idOrLink', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'username', 'fullName', 'category', 'knownAs', 'idOrLink', 'idProofData', 'status', 'createdAt', 'updatedAt']) &&
+                       isValidVerificationRequest(incoming());
+      allow update, delete: if false;
     }
 
     match /usernames/{usernameKey} {
@@ -342,7 +413,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidUsernameKey(usernameKey) &&
                        incoming().userId == request.auth.uid &&
                        incoming().usernameLower == usernameKey &&
-                       (!incoming().verified || hasVerifiedPhoneClaim()) &&
+                       incoming().verified == false &&
                        incoming().keys().hasAll(['userId', 'usernameLower', 'phoneE164', 'passwordSalt', 'passwordHash', 'verified', 'createdAt', 'updatedAt']) &&
                        incoming().keys().hasOnly(['userId', 'usernameLower', 'phoneE164', 'passwordSalt', 'passwordHash', 'verified', 'createdAt', 'updatedAt']) &&
                        isValidUsernameRecord(incoming());
@@ -351,9 +422,9 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().usernameLower == existing().usernameLower &&
                        incoming().createdAt == existing().createdAt &&
-                       (!incoming().verified || existing().verified || hasVerifiedPhoneClaim()) &&
+                       incoming().verified == existing().verified &&
                        isValidUsernameRecord(incoming()) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['phoneE164', 'passwordSalt', 'passwordHash', 'verified', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['phoneE164', 'passwordSalt', 'passwordHash', 'updatedAt']);
       allow delete: if isSignedIn() && isValidUsernameKey(usernameKey) && existing().userId == request.auth.uid;
     }
 
@@ -413,7 +484,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(storyId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'authorUsername', 'mediaType', 'visibility', 'expiresAtMillis', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorUsername', 'authorAvatar', 'mediaType', 'mediaData', 'textContent', 'bgGradient', 'visibility', 'expiresAtMillis', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorUsername', 'authorAvatar', 'mediaType', 'mediaData', 'textContent', 'bgGradient', 'filterName', 'songTitle', 'songArtist', 'songUrl', 'visibility', 'expiresAtMillis', 'createdAt']) &&
                        isValidStory(incoming());
       allow delete: if isSignedIn() && isValidId(storyId) && resource.data.userId == request.auth.uid;
     }

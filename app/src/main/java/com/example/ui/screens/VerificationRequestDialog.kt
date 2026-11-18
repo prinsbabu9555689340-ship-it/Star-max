@@ -41,7 +41,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -82,6 +81,7 @@ fun RequestVerificationDialog(
     profile: UserProfile,
     userSettings: UserSettings,
     userPhone: String,
+    isVerificationPending: Boolean = false,
     onSubmitRequest: (
         fullName: String,
         knownAs: String,
@@ -90,7 +90,6 @@ fun RequestVerificationDialog(
         idProofData: String,
         onDone: () -> Unit
     ) -> Unit,
-    onToggleDeveloperVerified: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -116,12 +115,12 @@ fun RequestVerificationDialog(
     var idProofData by remember(userSettings.verificationIdProofData) {
         mutableStateOf(userSettings.verificationIdProofData)
     }
-    var localSubmittedVerified by remember { mutableStateOf(false) }
+    var localSubmittedPending by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
 
     val effectiveStatus = when {
-        profile.verified || localSubmittedVerified -> "verified"
-        userSettings.verificationStatus == "pending" -> "pending"
+        profile.effectiveVerified -> "verified"
+        isVerificationPending || localSubmittedPending || userSettings.verificationStatus == "pending" -> "pending"
         else -> "none"
     }
 
@@ -252,7 +251,7 @@ fun RequestVerificationDialog(
                                 Text(
                                     text = when (effectiveStatus) {
                                         "verified" -> "Verified"
-                                        "pending" -> "Verification Pending"
+                                        "pending" -> "Under Review"
                                         else -> "Request Blue Tick"
                                     },
                                     style = MaterialTheme.typography.titleMedium,
@@ -267,56 +266,13 @@ fun RequestVerificationDialog(
                                 Text(
                                     text = when (effectiveStatus) {
                                         "verified" -> "@${profile.username} has the Star Max Blue Tick displayed across posts, comments, DMs, and search."
-                                        "pending" -> "We received your verification application for @${profile.username}. Use the Developer Toggle below to preview the badge immediately."
+                                        "pending" -> "Your Blue Tick request is under review for @${profile.username}. Once approved, the Blue Tick badge appears across Star Max."
                                         else -> "Verified accounts show a crisp blue checkmark next to their username across Star Max."
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-                    }
-
-                    // Instant Developer Verification Toggle right in the verification view
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Verified,
-                                contentDescription = null,
-                                tint = extended.verifiedBlue,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Admin / Developer Verification Toggle",
-                                    style = MaterialTheme.typography.titleSmall
-                                )
-                                Text(
-                                    text = if (profile.verified) {
-                                        "Instant preview: Blue Tick is ON"
-                                    } else {
-                                        "Instant preview: Turn ON to test the Blue Tick badge"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Switch(
-                                checked = profile.verified,
-                                onCheckedChange = onToggleDeveloperVerified,
-                                modifier = Modifier.testTag("verification_dialog_dev_toggle")
-                            )
                         }
                     }
 
@@ -482,9 +438,10 @@ fun RequestVerificationDialog(
                                 cleanLink,
                                 idProofData
                             ) {
-                                localSubmittedVerified = true
+                                localSubmittedPending = true
                             }
                         },
+                        enabled = effectiveStatus == "none",
                         colors = ButtonDefaults.buttonColors(
                             containerColor = extended.verifiedBlue,
                             contentColor = MaterialTheme.colorScheme.onPrimary
@@ -495,10 +452,18 @@ fun RequestVerificationDialog(
                             .height(52.dp)
                             .testTag("submit_verification_request_button")
                     ) {
-                        Icon(Icons.Filled.Verified, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(
+                            imageVector = if (effectiveStatus == "pending") Icons.Filled.HourglassTop else Icons.Filled.Verified,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (effectiveStatus == "verified") "Update Verified Details" else "Submit Request",
+                            text = when (effectiveStatus) {
+                                "verified" -> "Verified on Star Max"
+                                "pending" -> "Under Review"
+                                else -> "Submit Request"
+                            },
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold
                         )

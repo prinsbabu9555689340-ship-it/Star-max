@@ -8,14 +8,18 @@ import com.example.data.firebase.PasswordHasher
 import com.example.data.firebase.PhoneFormatUtils
 import com.example.data.firebase.handleFirestoreError
 import com.example.data.model.SavedAccountRecord
-import com.example.data.model.SampleData
+import com.example.data.model.StoryFilter
+import com.example.data.model.StoryMusicCatalog
+import com.example.data.model.UserProfile
 import com.example.data.model.UserSettings
+import com.example.data.model.VerificationRequest
 import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -119,15 +123,15 @@ class ExampleRobolectricTest {
     assertEquals(reg2.uid, manager.activeUid.value)
     assertEquals(2, manager.savedAccounts.value.size)
 
-    // Toggle Star Max Verified ON for reg2 and verify persistence
+    // Update pending verification state on saved record
     manager.updateAccountVerification(
       uid = reg2.uid,
-      verified = true,
-      verificationStatus = "verified",
+      verified = false,
+      verificationStatus = "pending",
       fullName = "Diya Lens",
       category = "Creator"
     )
-    assertTrue(manager.savedAccounts.value.first { it.uid == reg2.uid }.verified)
+    assertEquals("pending", manager.savedAccounts.value.first { it.uid == reg2.uid }.verificationStatus)
 
     // Switch back to reg1 in 1 tap
     assertTrue(manager.switchToSavedAccount(reg1.uid))
@@ -151,16 +155,48 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `verification defaults and sample verified creators match expected state`() {
+  fun `verification defaults, effectiveVerified, and pending request model match strict rules`() {
     val defaultSettings = UserSettings(userId = "u1")
     assertEquals("none", defaultSettings.verificationStatus)
     assertEquals("", defaultSettings.verificationFullName)
     assertEquals("", defaultSettings.verificationIdProofData)
+    assertFalse(defaultSettings.isVerified)
 
-    val verifiedIds = SampleData.sampleProfiles.filter { it.verified }.map { it.userId }.toSet()
-    assertTrue("sample_kai" in verifiedIds)
-    assertTrue("sample_maya" in verifiedIds)
-    assertTrue("sample_marcus" in verifiedIds)
-    assertFalse("sample_elena" in verifiedIds)
+    val unverifiedEvenWithLegacyFlag = UserProfile(userId = "u1", isVerified = false, verified = true)
+    assertFalse(unverifiedEvenWithLegacyFlag.effectiveVerified)
+
+    val verifiedUser = UserProfile(userId = "u2", isVerified = true, verified = false)
+    assertTrue(verifiedUser.effectiveVerified)
+
+    val request = VerificationRequest(
+      userId = "u1",
+      username = "aarav_star",
+      fullName = "Aarav Sharma",
+      category = "Creator",
+      idOrLink = "+919876543210"
+    )
+    assertEquals("pending", request.status)
+  }
+
+  @Test
+  fun `story filters and trending music catalog are valid`() {
+    assertNull(StoryFilter.NORMAL.toColorFilter())
+    assertNotNull(StoryFilter.WARM.toColorFilter())
+    assertNotNull(StoryFilter.COOL.toColorFilter())
+    assertNotNull(StoryFilter.VINTAGE.toColorFilter())
+    assertNotNull(StoryFilter.BW.toColorFilter())
+    assertNotNull(StoryFilter.VIVID.toColorFilter())
+
+    assertEquals(StoryFilter.VINTAGE, StoryFilter.fromId("Vintage"))
+    assertEquals(StoryFilter.BW, StoryFilter.fromId("b&w"))
+    assertEquals(StoryFilter.NORMAL, StoryFilter.fromId("unknown_filter"))
+
+    assertTrue(StoryMusicCatalog.trendingTracks.isNotEmpty())
+    StoryMusicCatalog.trendingTracks.forEach { track ->
+      assertTrue(track.title.isNotBlank())
+      assertTrue(track.artist.isNotBlank())
+      assertTrue(track.streamUrl.startsWith("https://"))
+      assertTrue(track.streamUrl.endsWith(".mp3"))
+    }
   }
 }

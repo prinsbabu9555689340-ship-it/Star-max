@@ -13,6 +13,7 @@ import com.example.data.model.NotificationItem
 import com.example.data.model.Post
 import com.example.data.model.Reel
 import com.example.data.model.Story
+import com.example.data.model.StoryFilter
 import com.example.data.model.ThemeMode
 import com.example.data.model.UiState
 import com.example.data.model.UserProfile
@@ -50,6 +51,8 @@ class StarMaxViewModel(
 
     private val _activeCommentTarget = MutableStateFlow<Pair<String, Boolean>?>(null) // id to isReel
     private val _activeChatConvId = MutableStateFlow<String?>(null)
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
     private val _localReadNotifIds = MutableStateFlow<Set<String>>(emptySet())
     private val _todayUsageSeconds = MutableStateFlow(0L)
     val todayUsageSeconds: StateFlow<Long> = _todayUsageSeconds.asStateFlow()
@@ -131,6 +134,25 @@ class StarMaxViewModel(
 
     val profilesState: StateFlow<UiState<List<UserProfile>>> =
         repository.observePublicProfiles(currentUserId).toUiState("profiles")
+
+    val searchedUsersState: StateFlow<UiState<List<UserProfile>>> = _searchQuery
+        .flatMapLatest { query ->
+            repository.searchUsersRealtime(query, currentUserId)
+        }
+        .toUiState("search users")
+
+    val hasPendingVerificationRequest: StateFlow<Boolean> = combine(
+        userSettings,
+        repository.observeHasPendingVerificationRequest(currentUserId)
+    ) { settings, hasPendingDoc ->
+        !settings.isVerified && (hasPendingDoc || settings.verificationStatus == "pending")
+    }.catch { error ->
+        val firestoreError = generateSequence(error) { it.cause }
+            .filterIsInstance<FirebaseFirestoreException>()
+            .firstOrNull()
+        if (firestoreError == null && error is CancellationException) throw error
+        emit(false)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), false)
 
     val currentUserProfile: StateFlow<UserProfile?> = profilesState
         .map { state ->
@@ -301,6 +323,10 @@ class StarMaxViewModel(
         }
     }
 
+    fun onSearchQueryChanged(query: String) {
+        _searchQuery.value = query
+    }
+
     fun submitVerificationRequest(
         fullName: String,
         knownAs: String,
@@ -309,34 +335,15 @@ class StarMaxViewModel(
         idProofData: String,
         onDone: () -> Unit = {}
     ) {
+        val actorUsername = currentUserProfile.value?.username ?: "star_user"
         viewModelScope.launch {
-            repository.submitVerificationRequest(fullName, knownAs, category, link, idProofData)
-                .onSuccess { status ->
-                    _actionMessage.value = if (status == "verified") {
-                        "Your Star Max profile is verified!"
-                    } else {
-                        "Verification request submitted (Pending review)"
-                    }
+            repository.submitVerificationRequest(actorUsername, fullName, knownAs, category, link, idProofData)
+                .onSuccess {
+                    _actionMessage.value = "Verification request submitted — Under Review"
                     onDone()
                 }
                 .onFailure {
                     _actionError.value = it.localizedMessage ?: "Failed to submit verification request"
-                }
-        }
-    }
-
-    fun setDeveloperVerified(verified: Boolean) {
-        viewModelScope.launch {
-            repository.setDeveloperVerified(verified)
-                .onSuccess {
-                    _actionMessage.value = if (verified) {
-                        "Blue Tick Verified badge enabled on your profile"
-                    } else {
-                        "Blue Tick Verified badge removed from your profile"
-                    }
-                }
-                .onFailure {
-                    _actionError.value = it.localizedMessage ?: "Failed to toggle verification"
                 }
         }
     }
@@ -531,6 +538,10 @@ class StarMaxViewModel(
         mediaData: String,
         textContent: String,
         bgGradient: String,
+        filterName: String = StoryFilter.NORMAL.id,
+        songTitle: String = "",
+        songArtist: String = "",
+        songUrl: String = "",
         onDone: () -> Unit
     ) {
         val author = currentUserProfile.value ?: UserProfile(
@@ -539,7 +550,17 @@ class StarMaxViewModel(
             fullName = "Star Creator"
         )
         viewModelScope.launch {
-            repository.createStory(author, mediaType, mediaData, textContent, bgGradient)
+            repository.createStory(
+                author = author,
+                mediaType = mediaType,
+                mediaData = mediaData,
+                textContent = textContent,
+                bgGradient = bgGradient,
+                filterName = filterName,
+                songTitle = songTitle,
+                songArtist = songArtist,
+                songUrl = songUrl
+            )
                 .onSuccess {
                     _actionMessage.value = "Story live for 24 hours!"
                     onDone()

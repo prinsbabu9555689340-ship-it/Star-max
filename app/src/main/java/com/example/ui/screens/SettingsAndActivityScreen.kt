@@ -92,6 +92,7 @@ fun SettingsAndActivityScreen(
     savedIds: Set<String>,
     followingIds: Set<String>,
     verifiedUserIds: Set<String> = emptySet(),
+    isVerificationPending: Boolean = false,
     onBack: () -> Unit,
     onSetDarkModeEnabled: (Boolean) -> Unit,
     onSetThemeMode: (ThemeMode) -> Unit,
@@ -106,7 +107,6 @@ fun SettingsAndActivityScreen(
         idProofData: String,
         onDone: () -> Unit
     ) -> Unit = { _, _, _, _, _, onDone -> onDone() },
-    onSetDeveloperVerified: (Boolean) -> Unit = {},
     onUpdateAppPassword: ((newPassword: String, onResult: (Result<Unit>) -> Unit) -> Unit)? = null,
     onLikeToggle: (Post) -> Unit,
     onDoubleTapLike: (Post) -> Unit,
@@ -302,11 +302,17 @@ fun SettingsAndActivityScreen(
                         )
 
                         // Star Max Verified (Blue Tick Request Form)
-                        val verificationStatusLabel = if (profile.verified) "Verified" else "Apply"
-                        val verificationSubtitle = if (profile.verified) {
-                            "Blue Tick active across Profile, Feed & Comments"
-                        } else {
-                            "Submit verification form or toggle badge below"
+                        val isVerified = profile.effectiveVerified
+                        val isPending = !isVerified && (isVerificationPending || userSettings.verificationStatus == "pending")
+                        val verificationStatusLabel = when {
+                            isVerified -> "Verified"
+                            isPending -> "Under Review"
+                            else -> "Apply"
+                        }
+                        val verificationSubtitle = when {
+                            isVerified -> "Blue Tick active across Profile, Feed & Comments"
+                            isPending -> "Your verification request is under review"
+                            else -> "Request the Star Max Blue Tick badge"
                         }
                         Row(
                             modifier = Modifier
@@ -330,18 +336,24 @@ fun SettingsAndActivityScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Surface(
-                                        color = if (profile.verified) {
-                                            extended.verifiedBlue.copy(alpha = 0.16f)
-                                        } else {
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                        color = when {
+                                            isVerified -> extended.verifiedBlue.copy(alpha = 0.16f)
+                                            isPending -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
+                                            else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                                         },
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
                                         Text(
                                             text = verificationStatusLabel,
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = if (profile.verified) extended.verifiedBlue else MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            color = when {
+                                                isVerified -> extended.verifiedBlue
+                                                isPending -> MaterialTheme.colorScheme.tertiary
+                                                else -> MaterialTheme.colorScheme.primary
+                                            },
+                                            modifier = Modifier
+                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                .testTag("settings_verification_status_badge")
                                         )
                                     }
                                 }
@@ -355,49 +367,6 @@ fun SettingsAndActivityScreen(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        HorizontalDivider(
-                            color = extended.subtleDivider,
-                            thickness = 0.5.dp,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-
-                        // Instant Star Max Verified Toggle inside Accounts Center
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSetDeveloperVerified(!profile.verified) }
-                                .padding(horizontal = 16.dp, vertical = 14.dp)
-                                .testTag("settings_dev_verified_row"),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Verified,
-                                contentDescription = "Toggle Star Max Verified",
-                                tint = if (profile.verified) extended.verifiedBlue else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Blue Tick Verification",
-                                    style = MaterialTheme.typography.titleSmall
-                                )
-                                Text(
-                                    text = if (profile.verified) {
-                                        "ON • Verified badge shown next to @${profile.username}"
-                                    } else {
-                                        "Turn ON to verify @${profile.username} instantly"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Switch(
-                                checked = profile.verified,
-                                onCheckedChange = onSetDeveloperVerified,
-                                modifier = Modifier.testTag("settings_dev_verified_switch")
                             )
                         }
                     }
@@ -738,12 +707,14 @@ fun SettingsAndActivityScreen(
     }
 
     if (showRequestVerification) {
+        val isPending = !profile.effectiveVerified &&
+            (isVerificationPending || userSettings.verificationStatus == "pending")
         RequestVerificationDialog(
             profile = profile,
             userSettings = userSettings,
             userPhone = userPhone,
+            isVerificationPending = isPending,
             onSubmitRequest = onSubmitVerificationRequest,
-            onToggleDeveloperVerified = onSetDeveloperVerified,
             onDismiss = { showRequestVerification = false }
         )
     }

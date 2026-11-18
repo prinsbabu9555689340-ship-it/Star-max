@@ -49,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.model.Post
@@ -317,32 +318,50 @@ fun HomeFeedScreen(
                 }
 
                 is UiState.Success -> {
-                    items(displayedPosts, key = { it.id }) { post ->
-                        val authorProfile = profiles.firstOrNull { it.userId == post.userId }
-                            ?: UserProfile(
-                                userId = post.userId,
-                                username = post.authorUsername,
-                                fullName = post.authorName,
-                                avatarData = post.authorAvatar
+                    if (displayedPosts.isEmpty()) {
+                        item(key = "empty_feed") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp, vertical = 48.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Welcome to Star Max! Create your first post (+) or search creators in Explore.",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    } else {
+                        items(displayedPosts, key = { it.id }) { post ->
+                            val authorProfile = profiles.firstOrNull { it.userId == post.userId }
+                                ?: UserProfile(
+                                    userId = post.userId,
+                                    username = post.authorUsername,
+                                    fullName = post.authorName,
+                                    avatarData = post.authorAvatar
+                                )
+                            val isVerified = authorProfile.effectiveVerified ||
+                                (post.userId == currentUserId && currentUserProfile?.effectiveVerified == true)
+                            PostCard(
+                                post = post,
+                                isLiked = post.id in likedIds,
+                                isSaved = post.id in savedIds,
+                                isFollowingAuthor = post.userId in followingIds,
+                                isOwnPost = post.userId == currentUserId,
+                                isAuthorVerified = isVerified,
+                                onLikeToggle = { onLikeToggle(post) },
+                                onDoubleTapLike = { onDoubleTapLike(post) },
+                                onCommentClick = { onOpenComments(post) },
+                                onSaveToggle = { onSaveToggle(post.id) },
+                                onAuthorClick = { onOpenProfile(post.userId) },
+                                onFollowClick = { onFollowToggle(authorProfile) },
+                                onHashtagClick = onHashtagClick,
+                                onArchiveToggle = { onArchiveToggle(post) }
                             )
-                        val isVerified = authorProfile.verified ||
-                            (post.userId == currentUserId && currentUserProfile?.verified == true)
-                        PostCard(
-                            post = post,
-                            isLiked = post.id in likedIds,
-                            isSaved = post.id in savedIds,
-                            isFollowingAuthor = post.userId in followingIds,
-                            isOwnPost = post.userId == currentUserId,
-                            isAuthorVerified = isVerified,
-                            onLikeToggle = { onLikeToggle(post) },
-                            onDoubleTapLike = { onDoubleTapLike(post) },
-                            onCommentClick = { onOpenComments(post) },
-                            onSaveToggle = { onSaveToggle(post.id) },
-                            onAuthorClick = { onOpenProfile(post.userId) },
-                            onFollowClick = { onFollowToggle(authorProfile) },
-                            onHashtagClick = onHashtagClick,
-                            onArchiveToggle = { onArchiveToggle(post) }
-                        )
+                        }
                     }
                 }
             }

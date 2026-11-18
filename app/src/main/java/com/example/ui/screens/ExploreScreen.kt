@@ -29,8 +29,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,22 +50,25 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.Post
+import com.example.data.model.UiState
 import com.example.data.model.UserProfile
 import com.example.ui.components.PostCard
 import com.example.ui.components.StarMaxMediaImage
 import com.example.ui.components.UserAvatar
 import com.example.ui.components.VerifiedBadge
-import com.example.ui.theme.LocalStarMaxColors
 
 @Composable
 fun ExploreScreen(
     currentUserId: String,
-    initialQuery: String,
+    searchQuery: String,
+    searchedUsersState: UiState<List<UserProfile>>,
+    onSearchQueryChange: (String) -> Unit,
     profiles: List<UserProfile>,
     posts: List<Post>,
     likedIds: Set<String>,
@@ -78,27 +81,14 @@ fun ExploreScreen(
     onOpenComments: (Post) -> Unit,
     onSaveToggle: (String) -> Unit
 ) {
-    var query by remember(initialQuery) { mutableStateOf(initialQuery) }
     var selectedTag by remember { mutableStateOf<String?>(null) }
     var inspectedPost by remember { mutableStateOf<Post?>(null) }
 
     val trendingTags = remember(posts) {
-        val extracted = posts.flatMap { it.hashtags }.distinct()
-        (listOf("tokyo", "travel", "coffee", "aurora", "nightlife") + extracted).distinct().take(10)
+        posts.flatMap { it.hashtags }.distinct().take(10)
     }
 
-    val cleanQuery = query.trim().removePrefix("#").removePrefix("@").lowercase()
-
-    val matchingUsers = remember(profiles, cleanQuery, currentUserId) {
-        if (cleanQuery.isBlank()) {
-            emptyList()
-        } else {
-            profiles.filter {
-                it.userId != currentUserId &&
-                    (it.usernameLower.contains(cleanQuery) || it.fullName.lowercase().contains(cleanQuery))
-            }
-        }
-    }
+    val cleanQuery = searchQuery.trim().removePrefix("#").removePrefix("@").lowercase()
 
     val filteredPosts = remember(posts, cleanQuery, selectedTag) {
         posts.filter { post ->
@@ -125,18 +115,18 @@ fun ExploreScreen(
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             OutlinedTextField(
-                value = query,
+                value = searchQuery,
                 onValueChange = {
-                    query = it
+                    onSearchQueryChange(it)
                     selectedTag = null
                 },
-                placeholder = { Text("Search users, #hashtags, places...") },
+                placeholder = { Text("Search users by username or name, #hashtags...") },
                 leadingIcon = {
                     Icon(imageVector = Icons.Filled.Search, contentDescription = null)
                 },
                 trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = "" }) {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { onSearchQueryChange("") }) {
                             Icon(imageVector = Icons.Filled.Close, contentDescription = "Clear search")
                         }
                     }
@@ -148,95 +138,156 @@ fun ExploreScreen(
                     .testTag("explore_search_input")
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                item {
-                    FilterChip(
-                        selected = selectedTag == null,
-                        onClick = { selectedTag = null },
-                        label = { Text("Trending") },
-                        shape = RoundedCornerShape(20.dp)
-                    )
-                }
-                items(trendingTags) { tag ->
-                    FilterChip(
-                        selected = selectedTag == tag,
-                        onClick = { selectedTag = if (selectedTag == tag) null else tag },
-                        label = { Text("#$tag") },
-                        shape = RoundedCornerShape(20.dp)
-                    )
+            if (trendingTags.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        FilterChip(
+                            selected = selectedTag == null,
+                            onClick = { selectedTag = null },
+                            label = { Text("Trending") },
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                    }
+                    items(trendingTags) { tag ->
+                        FilterChip(
+                            selected = selectedTag == tag,
+                            onClick = { selectedTag = if (selectedTag == tag) null else tag },
+                            label = { Text("#$tag") },
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                    }
                 }
             }
         }
 
-        if (matchingUsers.isNotEmpty()) {
-            LazyRow(
+        if (cleanQuery.isNotBlank()) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 720.dp)
-                    .padding(bottom = 10.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(bottom = 10.dp)
             ) {
-                items(matchingUsers, key = { it.userId }) { user ->
-                    val isFollowing = user.userId in followingIds
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 2.dp,
-                        modifier = Modifier
-                            .width(156.dp)
-                            .clickable { onOpenProfile(user.userId) }
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                Text(
+                    text = "People",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+                when (searchedUsersState) {
+                    is UiState.Loading -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            UserAvatar(
-                                avatarData = user.avatarData,
-                                username = user.username,
-                                size = 50.dp,
-                                showOnlineBadge = user.online
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = user.username,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (user.verified) {
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    VerifiedBadge(size = 13.dp)
-                                }
-                            }
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                             Text(
-                                text = user.fullName,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = "Searching Star Max users...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            if (isFollowing) {
-                                OutlinedButton(
-                                    onClick = { onFollowToggle(user) },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("Following", style = MaterialTheme.typography.labelMedium)
-                                }
-                            } else {
-                                Button(
-                                    onClick = { onFollowToggle(user) },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("Follow", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+
+                    is UiState.Error -> {
+                        Text(
+                            text = searchedUsersState.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+
+                    is UiState.Success -> {
+                        val matchedUsers = searchedUsersState.data.filter { it.effectiveUid != currentUserId }
+                        if (matchedUsers.isEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 4.dp)
+                                    .testTag("explore_no_users_found")
+                            ) {
+                                Text(
+                                    text = "No matching creators found for \"$searchQuery\"",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
+                                )
+                            }
+                        } else {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 14.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(matchedUsers, key = { it.effectiveUid }) { user ->
+                                    val uid = user.effectiveUid
+                                    val isFollowing = uid in followingIds
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        tonalElevation = 2.dp,
+                                        modifier = Modifier
+                                            .width(156.dp)
+                                            .clickable { onOpenProfile(uid) }
+                                            .testTag("explore_user_card_$uid")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(12.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            UserAvatar(
+                                                avatarData = user.effectiveAvatar,
+                                                username = user.username,
+                                                size = 50.dp,
+                                                showOnlineBadge = user.online
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = user.username,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                if (user.effectiveVerified) {
+                                                    Spacer(modifier = Modifier.width(3.dp))
+                                                    VerifiedBadge(size = 13.dp)
+                                                }
+                                            }
+                                            Text(
+                                                text = user.fullName,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            if (isFollowing) {
+                                                OutlinedButton(
+                                                    onClick = { onFollowToggle(user) },
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Text("Following", style = MaterialTheme.typography.labelMedium)
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = { onFollowToggle(user) },
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Text("Follow", style = MaterialTheme.typography.labelMedium)
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -253,9 +304,14 @@ fun ExploreScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No matching posts or hashtags found.",
+                    text = if (cleanQuery.isBlank() && selectedTag == null) {
+                        "No posts yet. Tap Create (+) to share the first photo or Reel!"
+                    } else {
+                        "No matching posts or hashtags found."
+                    },
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
                 )
             }
         } else {
@@ -356,7 +412,7 @@ fun ExploreScreen(
                             isSaved = latest.id in savedIds,
                             isFollowingAuthor = latest.userId in followingIds,
                             isOwnPost = latest.userId == currentUserId,
-                            isAuthorVerified = authorProfile.verified,
+                            isAuthorVerified = authorProfile.effectiveVerified,
                             onLikeToggle = { onLikeToggle(latest) },
                             onDoubleTapLike = { onDoubleTapLike(latest) },
                             onCommentClick = { onOpenComments(latest) },

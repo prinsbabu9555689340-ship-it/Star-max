@@ -190,7 +190,7 @@ fun ProfileScreen(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
-                if (profile.verified) {
+                if (profile.effectiveVerified) {
                     Spacer(modifier = Modifier.width(5.dp))
                     VerifiedBadge(
                         size = 18.dp,
@@ -456,7 +456,7 @@ fun ProfileScreen(
                     username = profile.username,
                     fullName = profile.fullName,
                     avatarData = profile.avatarData,
-                    verified = profile.verified
+                    verified = profile.effectiveVerified
                 )
             )
         }
@@ -502,7 +502,7 @@ fun ProfileScreen(
                             isSaved = latest.id in savedIds,
                             isFollowingAuthor = latest.userId in followingIds,
                             isOwnPost = latest.userId == profile.userId && isOwnProfile,
-                            isAuthorVerified = latest.userId in verifiedUserIds || (latest.userId == profile.userId && profile.verified),
+                            isAuthorVerified = latest.userId in verifiedUserIds || (latest.userId == profile.userId && profile.effectiveVerified),
                             onLikeToggle = { onLikeToggle(latest) },
                             onDoubleTapLike = { onDoubleTapLike(latest) },
                             onCommentClick = { onOpenComments(latest) },

@@ -33,6 +33,9 @@ data class UserSettings(
     @field:PropertyName("isPrivate")
     @get:PropertyName("isPrivate")
     val isPrivate: Boolean = false,
+    @field:PropertyName("isVerified")
+    @get:PropertyName("isVerified")
+    val isVerified: Boolean = false,
     val notifyLikes: Boolean = true,
     val notifyComments: Boolean = true,
     val notifyFollowers: Boolean = true,
@@ -47,6 +50,22 @@ data class UserSettings(
     val verificationLink: String = "",
     val verificationIdProofData: String = "",
     val verificationSubmittedAtMillis: Long = 0L,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class VerificationRequest(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val username: String = "",
+    val fullName: String = "",
+    val category: String = "",
+    val knownAs: String = "",
+    val idOrLink: String = "",
+    val idProofData: String = "",
+    val status: String = "pending",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
@@ -98,12 +117,15 @@ data class FollowRequest(
 @IgnoreExtraProperties
 data class UserProfile(
     @DocumentId val id: String = "",
+    val uid: String = "",
     val userId: String = "",
     val username: String = "",
     val usernameLower: String = "",
     val fullName: String = "",
+    val mobile: String = "",
     val bio: String = "",
     val website: String = "",
+    val profilePic: String = "",
     val avatarData: String = "",
     val avatarTint: String = "#E1306C",
     val visibility: String = "public",
@@ -113,11 +135,18 @@ data class UserProfile(
     val postsCount: Long = 0L,
     val followersCount: Long = 0L,
     val followingCount: Long = 0L,
+    @field:PropertyName("isVerified")
+    @get:PropertyName("isVerified")
+    val isVerified: Boolean = false,
     val verified: Boolean = false,
     val online: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
-)
+) {
+    val effectiveUid: String get() = userId.ifBlank { uid }.ifBlank { id }
+    val effectiveAvatar: String get() = avatarData.ifBlank { profilePic }
+    val effectiveVerified: Boolean get() = isVerified
+}
 
 @Keep
 @IgnoreExtraProperties
@@ -165,6 +194,10 @@ data class Story(
     val mediaData: String = "",
     val textContent: String = "",
     val bgGradient: String = "sunset",
+    val filterName: String = "Normal",
+    val songTitle: String = "",
+    val songArtist: String = "",
+    val songUrl: String = "",
     val visibility: String = "public",
     val expiresAtMillis: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null

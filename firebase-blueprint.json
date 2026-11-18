@@ -2,10 +2,27 @@
   "entities": {
     "UserAccount": {
       "title": "UserAccount",
-      "description": "Private user preferences, notification settings, and daily usage metadata",
+      "description": "Cloud user profile, verification status, notification preferences, and activity metadata",
       "type": "object",
       "properties": {
+        "uid": { "type": "string" },
         "userId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "username": { "type": "string" },
+        "usernameLower": { "type": "string" },
+        "mobile": { "type": "string" },
+        "isVerified": { "type": "boolean" },
+        "verified": { "type": "boolean" },
+        "profilePic": { "type": "string" },
+        "avatarData": { "type": "string" },
+        "avatarTint": { "type": "string" },
+        "bio": { "type": "string" },
+        "website": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public"] },
+        "postsCount": { "type": "integer" },
+        "followersCount": { "type": "integer" },
+        "followingCount": { "type": "integer" },
+        "online": { "type": "boolean" },
         "themeMode": { "type": "string", "enum": ["system", "dark", "light"] },
         "isPrivate": { "type": "boolean" },
         "notifyLikes": { "type": "boolean" },
@@ -25,26 +42,47 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
       },
-      "required": ["userId", "themeMode", "createdAt", "updatedAt"]
+      "required": ["uid", "userId", "fullName", "username", "usernameLower", "mobile", "isVerified", "profilePic", "visibility", "themeMode", "createdAt", "updatedAt"]
+    },
+    "VerificationRequest": {
+      "title": "VerificationRequest",
+      "description": "User-submitted Blue Tick verification review request",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "fullName": { "type": "string" },
+        "category": { "type": "string" },
+        "knownAs": { "type": "string" },
+        "idOrLink": { "type": "string" },
+        "idProofData": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "username", "fullName", "category", "idOrLink", "status", "createdAt", "updatedAt"]
     },
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Public creator profile for Star Max",
+      "description": "Public creator profile mirror for Star Max",
       "type": "object",
       "properties": {
         "userId": { "type": "string" },
         "username": { "type": "string" },
         "usernameLower": { "type": "string" },
         "fullName": { "type": "string" },
+        "mobile": { "type": "string" },
         "bio": { "type": "string" },
         "website": { "type": "string" },
         "avatarData": { "type": "string" },
+        "profilePic": { "type": "string" },
         "avatarTint": { "type": "string" },
         "visibility": { "type": "string", "enum": ["public"] },
         "isPrivate": { "type": "boolean" },
         "postsCount": { "type": "integer" },
         "followersCount": { "type": "integer" },
         "followingCount": { "type": "integer" },
+        "isVerified": { "type": "boolean" },
         "verified": { "type": "boolean" },
         "online": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -93,7 +131,7 @@
     },
     "Story": {
       "title": "Story",
-      "description": "24-hour disappearing photo or text story",
+      "description": "24-hour disappearing photo or text story with color filter and music track",
       "type": "object",
       "properties": {
         "userId": { "type": "string" },
@@ -103,6 +141,10 @@
         "mediaData": { "type": "string" },
         "textContent": { "type": "string" },
         "bgGradient": { "type": "string" },
+        "filterName": { "type": "string", "enum": ["Normal", "Warm", "Cool", "Vintage", "B&W", "Vivid"] },
+        "songTitle": { "type": "string" },
+        "songArtist": { "type": "string" },
+        "songUrl": { "type": "string" },
         "visibility": { "type": "string", "enum": ["public"] },
         "expiresAtMillis": { "type": "integer" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -268,11 +310,15 @@
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserAccount" },
-      "description": "Private user preferences"
+      "description": "Cloud user profiles (searchable public fields) and account preferences"
     },
     "/profiles/{profileId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Public creator profiles"
+      "description": "Public creator profile mirror"
+    },
+    "/verification_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/VerificationRequest" },
+      "description": "Submitted Blue Tick verification review requests"
     },
     "/usernames/{usernameKey}": {
       "schema": { "$ref": "#/entities/UsernameRecord" },
@@ -292,7 +338,7 @@
     },
     "/stories/{storyId}": {
       "schema": { "$ref": "#/entities/Story" },
-      "description": "24-hour disappearing stories"
+      "description": "24-hour disappearing stories with optional filters and music"
     },
     "/reels/{reelId}": {
       "schema": { "$ref": "#/entities/Reel" },

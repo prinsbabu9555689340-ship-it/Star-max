@@ -11,8 +11,8 @@ import com.example.data.model.FollowRequest
 import com.example.data.model.NotificationItem
 import com.example.data.model.Post
 import com.example.data.model.Reel
-import com.example.data.model.SampleData
 import com.example.data.model.Story
+import com.example.data.model.StoryFilter
 import com.example.data.model.ThemeMode
 import com.example.data.model.UserProfile
 import com.example.data.model.UserSettings
@@ -166,7 +166,6 @@ class SocialRepository(
 
             val phoneE164 = user.phoneNumber?.takeIf { it.isNotBlank() }
                 ?: PhoneFormatUtils.toIndianE164(digits10)
-            val isPhoneVerified = !user.phoneNumber.isNullOrBlank()
 
             val phoneDocRef = db.collection("phoneRegistry").document(digits10)
             val existingPhone = phoneDocRef.get().await()
@@ -192,31 +191,52 @@ class SocialRepository(
                 opType = OperationType.CREATE
                 userDocRef.set(
                     mapOf(
+                        "uid" to uid,
                         "userId" to uid,
-                        "themeMode" to ThemeMode.SYSTEM.wireValue,
+                        "fullName" to cleanFullName,
+                        "username" to cleanUsername,
+                        "usernameLower" to cleanUsername,
+                        "mobile" to phoneE164,
+                        "phoneE164" to phoneE164,
+                        "isVerified" to false,
+                        "verified" to false,
+                        "profilePic" to "",
+                        "avatarData" to "",
+                        "avatarTint" to "#E1306C",
+                        "bio" to "Capturing moments on Star Max ✨",
+                        "website" to "",
+                        "visibility" to "public",
                         "isPrivate" to false,
+                        "postsCount" to 0L,
+                        "followersCount" to 0L,
+                        "followingCount" to 0L,
+                        "online" to true,
+                        "themeMode" to ThemeMode.SYSTEM.wireValue,
                         "notifyLikes" to true,
                         "notifyComments" to true,
                         "notifyFollowers" to true,
                         "notifyMessages" to true,
                         "dailyUsageSeconds" to 0L,
                         "usageDate" to ThemePreferences.todayDateKey(),
-                        "phoneE164" to phoneE164,
-                        "verificationStatus" to if (isPhoneVerified) "verified" else "none",
+                        "verificationStatus" to "none",
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
             } else {
                 opType = OperationType.UPDATE
-                val userUpdates = mutableMapOf<String, Any>(
-                    "phoneE164" to phoneE164,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                if (isPhoneVerified) {
-                    userUpdates["verificationStatus"] = "verified"
-                }
-                userDocRef.update(userUpdates).await()
+                userDocRef.update(
+                    mapOf(
+                        "uid" to uid,
+                        "fullName" to cleanFullName,
+                        "username" to cleanUsername,
+                        "usernameLower" to cleanUsername,
+                        "mobile" to phoneE164,
+                        "phoneE164" to phoneE164,
+                        "online" to true,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
             }
 
             val profileDocRef = db.collection("profiles").document(uid)
@@ -231,51 +251,36 @@ class SocialRepository(
                         "username" to cleanUsername,
                         "usernameLower" to cleanUsername,
                         "fullName" to cleanFullName,
-                        "bio" to "Verified on Star Max ✨",
+                        "mobile" to phoneE164,
+                        "bio" to "Capturing moments on Star Max ✨",
                         "website" to "",
+                        "avatarData" to "",
+                        "profilePic" to "",
                         "avatarTint" to "#E1306C",
                         "visibility" to "public",
                         "isPrivate" to false,
                         "postsCount" to 0L,
                         "followersCount" to 0L,
-                        "followingCount" to 2L,
-                        "verified" to isPhoneVerified,
+                        "followingCount" to 0L,
+                        "isVerified" to false,
+                        "verified" to false,
                         "online" to true,
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
-
-                val followingCol = db.collection("users").document(uid).collection("following")
-                opPath = "users/$uid/following/sample_kai"
-                followingCol.document("sample_kai").set(
-                    mapOf(
-                        "targetUserId" to "sample_kai",
-                        "targetUsername" to "kai_tokyo",
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
-                opPath = "users/$uid/following/sample_maya"
-                followingCol.document("sample_maya").set(
-                    mapOf(
-                        "targetUserId" to "sample_maya",
-                        "targetUsername" to "maya.lens",
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
             } else {
                 opType = OperationType.UPDATE
-                val updateMap = mutableMapOf<String, Any>(
-                    "username" to cleanUsername,
-                    "usernameLower" to cleanUsername,
-                    "fullName" to cleanFullName,
-                    "online" to true,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                if (isPhoneVerified) {
-                    updateMap["verified"] = true
-                }
-                profileDocRef.update(updateMap).await()
+                profileDocRef.update(
+                    mapOf(
+                        "username" to cleanUsername,
+                        "usernameLower" to cleanUsername,
+                        "fullName" to cleanFullName,
+                        "mobile" to phoneE164,
+                        "online" to true,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
             }
 
             val salt = PasswordHasher.generateSalt()
@@ -291,7 +296,7 @@ class SocialRepository(
                         "phoneE164" to phoneE164,
                         "passwordSalt" to salt,
                         "passwordHash" to hash,
-                        "verified" to isPhoneVerified,
+                        "verified" to false,
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
@@ -303,7 +308,6 @@ class SocialRepository(
                         "phoneE164" to phoneE164,
                         "passwordSalt" to salt,
                         "passwordHash" to hash,
-                        "verified" to isPhoneVerified,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
@@ -334,11 +338,17 @@ class SocialRepository(
 
             Result.success(
                 UserProfile(
+                    id = uid,
+                    uid = uid,
                     userId = uid,
                     username = cleanUsername,
                     usernameLower = cleanUsername,
                     fullName = cleanFullName,
-                    verified = isPhoneVerified,
+                    mobile = phoneE164,
+                    bio = "Capturing moments on Star Max ✨",
+                    visibility = "public",
+                    isVerified = false,
+                    verified = false,
                     online = true
                 )
             )
@@ -387,42 +397,71 @@ class SocialRepository(
         val uid = user.uid
         var opType = OperationType.GET
         var opPath = "users/$uid"
-        val isPhoneVerified = !user.phoneNumber.isNullOrBlank()
         return try {
+            val rawName = user.displayName?.takeIf { it.isNotBlank() } ?: "Star Creator"
+            val baseHandle = sanitizeUsername(rawName)
+                .ifBlank { "star_${uid.take(6).lowercase()}" }
+                .let { if (it.length < 3) "${it}_star" else it }
+            val avatarUrl = user.photoUrl?.toString()?.takeIf { it.length <= 350000 }.orEmpty()
+            val phone = user.phoneNumber.orEmpty()
+
             val userDocRef = db.collection("users").document(uid)
             val userSnap = userDocRef.get().await()
             if (!userSnap.exists()) {
                 opType = OperationType.CREATE
                 opPath = userDocRef.path
                 val payload = mutableMapOf<String, Any>(
+                    "uid" to uid,
                     "userId" to uid,
-                    "themeMode" to ThemeMode.SYSTEM.wireValue,
+                    "fullName" to rawName.take(60),
+                    "username" to baseHandle,
+                    "usernameLower" to baseHandle.lowercase(),
+                    "mobile" to phone,
+                    "isVerified" to false,
+                    "verified" to false,
+                    "profilePic" to avatarUrl,
+                    "avatarData" to avatarUrl,
+                    "avatarTint" to "#E1306C",
+                    "bio" to "Capturing moments on Star Max ✨",
+                    "website" to "",
+                    "visibility" to "public",
                     "isPrivate" to false,
+                    "postsCount" to 0L,
+                    "followersCount" to 0L,
+                    "followingCount" to 0L,
+                    "online" to true,
+                    "themeMode" to ThemeMode.SYSTEM.wireValue,
                     "notifyLikes" to true,
                     "notifyComments" to true,
                     "notifyFollowers" to true,
                     "notifyMessages" to true,
                     "dailyUsageSeconds" to 0L,
                     "usageDate" to ThemePreferences.todayDateKey(),
-                    "verificationStatus" to if (isPhoneVerified) "verified" else "none",
+                    "verificationStatus" to "none",
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
-                val phone = user.phoneNumber.orEmpty()
                 if (phone.isNotBlank()) {
                     payload["phoneE164"] = phone
                 }
                 userDocRef.set(payload).await()
-            } else if (!user.phoneNumber.isNullOrBlank() && userSnap.getString("phoneE164").isNullOrBlank()) {
+            } else {
                 opType = OperationType.UPDATE
                 opPath = userDocRef.path
-                userDocRef.update(
-                    mapOf(
-                        "phoneE164" to user.phoneNumber.orEmpty(),
-                        "verificationStatus" to "verified",
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                val userUpdates = mutableMapOf<String, Any>(
+                    "online" to true,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (userSnap.getString("uid").isNullOrBlank()) userUpdates["uid"] = uid
+                if (userSnap.getString("fullName").isNullOrBlank()) userUpdates["fullName"] = rawName.take(60)
+                if (userSnap.getString("username").isNullOrBlank()) userUpdates["username"] = baseHandle
+                if (userSnap.getString("usernameLower").isNullOrBlank()) userUpdates["usernameLower"] = baseHandle.lowercase()
+                if (userSnap.get("profilePic") == null) userUpdates["profilePic"] = avatarUrl
+                if (userSnap.get("mobile") == null) userUpdates["mobile"] = phone
+                if (phone.isNotBlank() && userSnap.getString("phoneE164").isNullOrBlank()) {
+                    userUpdates["phoneE164"] = phone
+                }
+                userDocRef.update(userUpdates).await()
             }
 
             val profileDocRef = db.collection("profiles").document(uid)
@@ -430,68 +469,42 @@ class SocialRepository(
             opPath = profileDocRef.path
             val profileSnap = profileDocRef.get().await()
             if (!profileSnap.exists()) {
-                val rawName = user.displayName?.takeIf { it.isNotBlank() } ?: "Star Creator"
-                val baseHandle = rawName.lowercase()
-                    .replace(Regex("[^a-z0-9._]"), "")
-                    .ifBlank { "star_${uid.take(6).lowercase()}" }
-                    .take(24)
-                    .let { if (it.length < 3) "${it}_star" else it }
-                val avatarUrl = user.photoUrl?.toString().orEmpty()
-
+                val effectiveUsername = userSnap.getString("username")?.takeIf { it.isNotBlank() } ?: baseHandle
+                val effectiveFullName = userSnap.getString("fullName")?.takeIf { it.isNotBlank() } ?: rawName.take(60)
                 val profilePayload = mutableMapOf<String, Any>(
                     "userId" to uid,
-                    "username" to baseHandle,
-                    "usernameLower" to baseHandle.lowercase(),
-                    "fullName" to rawName.take(60),
+                    "username" to effectiveUsername,
+                    "usernameLower" to effectiveUsername.lowercase(),
+                    "fullName" to effectiveFullName,
+                    "mobile" to phone,
                     "bio" to "Capturing moments on Star Max ✨",
                     "website" to "",
+                    "avatarData" to avatarUrl,
+                    "profilePic" to avatarUrl,
                     "avatarTint" to "#E1306C",
                     "visibility" to "public",
                     "isPrivate" to false,
                     "postsCount" to 0L,
-                    "followersCount" to 128L,
-                    "followingCount" to 2L,
-                    "verified" to isPhoneVerified,
+                    "followersCount" to 0L,
+                    "followingCount" to 0L,
+                    "isVerified" to false,
+                    "verified" to false,
                     "online" to true,
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
-                if (avatarUrl.isNotBlank() && avatarUrl.length <= 350000) {
-                    profilePayload["avatarData"] = avatarUrl
-                }
                 opType = OperationType.CREATE
                 opPath = profileDocRef.path
                 profileDocRef.set(profilePayload).await()
-
-                // Auto-follow 2 featured starter creators so the Home Feed is lively on first launch
-                val followingCol = db.collection("users").document(uid).collection("following")
-                opPath = "users/$uid/following/sample_kai"
-                followingCol.document("sample_kai").set(
-                    mapOf(
-                        "targetUserId" to "sample_kai",
-                        "targetUsername" to "kai_tokyo",
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
-                opPath = "users/$uid/following/sample_maya"
-                followingCol.document("sample_maya").set(
-                    mapOf(
-                        "targetUserId" to "sample_maya",
-                        "targetUsername" to "maya.lens",
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
             } else {
                 opType = OperationType.UPDATE
                 opPath = profileDocRef.path
-                val updatePayload = mutableMapOf<String, Any>(
-                    "online" to true,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                if (isPhoneVerified && profileSnap.getBoolean("verified") != true) {
-                    updatePayload["verified"] = true
-                }
-                profileDocRef.update(updatePayload).await()
+                profileDocRef.update(
+                    mapOf(
+                        "online" to true,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -503,31 +516,84 @@ class SocialRepository(
         }
     }
 
+    private fun normalizeProfile(raw: UserProfile): UserProfile {
+        val uid = raw.effectiveUid
+        val uname = raw.username.ifBlank { raw.usernameLower }
+        val unameLower = raw.usernameLower.ifBlank { uname.lowercase() }
+        val avatar = raw.effectiveAvatar
+        return raw.copy(
+            uid = uid,
+            userId = uid,
+            username = uname,
+            usernameLower = unameLower,
+            avatarData = avatar,
+            profilePic = avatar
+        )
+    }
+
     fun observePublicProfiles(uid: String): Flow<List<UserProfile>> =
-        db.collection("profiles")
+        db.collection("users")
             .whereEqualTo("visibility", "public")
             .snapshots()
             .map { snapshot ->
-                val remote = snapshot.toObjects(
+                snapshot.toObjects(
                     UserProfile::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-                val remoteIds = remote.mapTo(HashSet()) { it.userId }
-                remote + SampleData.sampleProfiles.filter { it.userId !in remoteIds }
+                ).map(::normalizeProfile)
+                    .filter { it.effectiveUid.isNotBlank() && it.username.isNotBlank() }
             }
-            .handleStreamErrors(OperationType.LIST, "profiles", uid)
+            .handleStreamErrors(OperationType.LIST, "users", uid)
+
+    fun searchUsersRealtime(query: String, currentUid: String): Flow<List<UserProfile>> {
+        val clean = query.trim().removePrefix("@").lowercase()
+        return db.collection("users")
+            .whereEqualTo("visibility", "public")
+            .snapshots()
+            .map { snapshot ->
+                val allUsers = snapshot.toObjects(
+                    UserProfile::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ).map(::normalizeProfile)
+                    .filter { it.effectiveUid.isNotBlank() && it.effectiveUid != currentUid }
+
+                if (clean.isBlank()) {
+                    emptyList()
+                } else {
+                    allUsers.filter { user ->
+                        user.usernameLower.contains(clean) ||
+                            user.username.lowercase().contains(clean) ||
+                            user.fullName.lowercase().contains(clean)
+                    }.sortedBy { user ->
+                        when {
+                            user.usernameLower == clean -> 0
+                            user.usernameLower.startsWith(clean) -> 1
+                            user.fullName.lowercase().startsWith(clean) -> 2
+                            else -> 3
+                        }
+                    }
+                }
+            }
+            .handleStreamErrors(OperationType.LIST, "users", currentUid)
+    }
+
+    fun observeHasPendingVerificationRequest(uid: String): Flow<Boolean> =
+        db.collection("verification_requests")
+            .whereEqualTo("userId", uid)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.documents.any { it.getString("status") == "pending" }
+            }
+            .handleStreamErrors(OperationType.LIST, "verification_requests", uid)
 
     fun observePosts(uid: String): Flow<List<Post>> =
         db.collection("posts")
             .whereEqualTo("visibility", "public")
             .snapshots()
             .map { snapshot ->
-                val remote = snapshot.toObjects(
+                snapshot.toObjects(
                     Post::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-                (remote + SampleData.samplePosts)
-                    .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+                ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             }
             .handleStreamErrors(OperationType.LIST, "posts", uid)
 
@@ -537,11 +603,10 @@ class SocialRepository(
             .snapshots()
             .map { snapshot ->
                 val now = System.currentTimeMillis()
-                val remote = snapshot.toObjects(
+                snapshot.toObjects(
                     Story::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                 ).filter { it.expiresAtMillis > now }
-                (remote + SampleData.sampleStories)
                     .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             }
             .handleStreamErrors(OperationType.LIST, "stories", uid)
@@ -551,12 +616,10 @@ class SocialRepository(
             .whereEqualTo("visibility", "public")
             .snapshots()
             .map { snapshot ->
-                val remote = snapshot.toObjects(
+                snapshot.toObjects(
                     Reel::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-                (remote + SampleData.sampleReels)
-                    .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+                ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             }
             .handleStreamErrors(OperationType.LIST, "reels", uid)
 
@@ -566,12 +629,10 @@ class SocialRepository(
             .whereEqualTo("postId", postId)
             .snapshots()
             .map { snapshot ->
-                val remote = snapshot.toObjects(
+                snapshot.toObjects(
                     Comment::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-                val starter = SampleData.sampleCommentsByPost[postId].orEmpty()
-                (starter + remote).sortedBy { it.createdAt ?: Timestamp.now() }
+                ).sortedBy { it.createdAt ?: Timestamp.now() }
             }
             .handleStreamErrors(OperationType.LIST, "comments", uid)
 
@@ -597,12 +658,10 @@ class SocialRepository(
         db.collection("users").document(uid).collection("notifications")
             .snapshots()
             .map { snapshot ->
-                val remote = snapshot.toObjects(
+                snapshot.toObjects(
                     NotificationItem::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-                (remote + SampleData.sampleNotifications)
-                    .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+                ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             }
             .handleStreamErrors(OperationType.LIST, "users/$uid/notifications", uid)
 
@@ -713,12 +772,14 @@ class SocialRepository(
                 )
             ).await()
             path = "profiles/$currentUid"
-            db.collection("profiles").document(currentUid).update(
-                mapOf(
-                    "isPrivate" to isPrivate,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            runCatching {
+                db.collection("profiles").document(currentUid).update(
+                    mapOf(
+                        "isPrivate" to isPrivate,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -777,6 +838,7 @@ class SocialRepository(
     }
 
     suspend fun submitVerificationRequest(
+        actorUsername: String,
         fullName: String,
         knownAs: String,
         category: String,
@@ -784,7 +846,8 @@ class SocialRepository(
         idProofData: String
     ): Result<String> {
         val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
-        var path = "profiles/$uid"
+        var path = "verification_requests"
+        var opType = OperationType.CREATE
         return try {
             val currentUid = requireUserId()
             val cleanFullName = fullName.trim().take(80)
@@ -796,69 +859,53 @@ class SocialRepository(
             require(cleanProof.isNotBlank() || cleanLink.isNotBlank()) {
                 "Please select an ID proof photo or enter your mobile / social link."
             }
+            val cleanHandle = sanitizeUsername(actorUsername).ifBlank { "star_user" }
 
-            path = "profiles/$currentUid"
-            db.collection("profiles").document(currentUid).update(
-                mapOf(
-                    "verified" to true,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            val requestDoc = db.collection("verification_requests").document()
+            path = requestDoc.path
+            opType = OperationType.CREATE
+            val requestPayload = mutableMapOf<String, Any>(
+                "userId" to currentUid,
+                "username" to cleanHandle,
+                "fullName" to cleanFullName,
+                "category" to cleanCategory,
+                "knownAs" to cleanKnownAs,
+                "idOrLink" to cleanLink,
+                "status" to "pending",
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            if (cleanProof.isNotBlank()) {
+                requestPayload["idProofData"] = cleanProof
+            }
+            requestDoc.set(requestPayload).await()
 
             path = "users/$currentUid"
-            db.collection("users").document(currentUid).update(
-                mapOf(
-                    "verificationStatus" to "verified",
-                    "verificationFullName" to cleanFullName,
-                    "verificationCategory" to cleanCategory,
-                    "verificationKnownAs" to cleanKnownAs,
-                    "verificationLink" to cleanLink,
-                    "verificationIdProofData" to cleanProof,
-                    "verificationSubmittedAtMillis" to System.currentTimeMillis(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-            Result.success("verified")
+            opType = OperationType.UPDATE
+            val userUpdates = mutableMapOf<String, Any>(
+                "verificationFullName" to cleanFullName,
+                "verificationCategory" to cleanCategory,
+                "verificationKnownAs" to cleanKnownAs,
+                "verificationLink" to cleanLink,
+                "verificationIdProofData" to cleanProof,
+                "verificationSubmittedAtMillis" to System.currentTimeMillis(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            val existingUserSnap = db.collection("users").document(currentUid).get().await()
+            if (existingUserSnap.getBoolean("isVerified") != true) {
+                userUpdates["verificationStatus"] = "pending"
+            }
+            db.collection("users").document(currentUid).update(userUpdates).await()
+            Result.success("pending")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, path)
-            Result.failure(e)
-        }
-    }
-
-    suspend fun setDeveloperVerified(verified: Boolean): Result<Unit> {
-        val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
-        var path = "profiles/$uid"
-        return try {
-            val currentUid = requireUserId()
-            val nextStatus = if (verified) "verified" else "none"
-            db.collection("profiles").document(currentUid).update(
-                mapOf(
-                    "verified" to verified,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-            path = "users/$currentUid"
-            db.collection("users").document(currentUid).update(
-                mapOf(
-                    "verificationStatus" to nextStatus,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-            Result.success(Unit)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, path)
+            handleFirestoreError(e, opType, path)
             Result.failure(e)
         }
     }
 
     suspend fun toggleArchivePost(postId: String, currentlyArchived: Boolean): Result<Unit> {
-        if (postId.startsWith("sample_")) {
-            return Result.failure(IllegalArgumentException("Sample posts cannot be archived"))
-        }
         val path = "posts/$postId"
         return try {
             requireUserId()
@@ -886,7 +933,7 @@ class SocialRepository(
         avatarData: String?
     ): Result<Unit> {
         val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
-        var path = "profiles/$uid"
+        var path = "users/$uid"
         return try {
             val currentUid = requireUserId()
             val cleanUsername = sanitizeUsername(username)
@@ -894,8 +941,9 @@ class SocialRepository(
             val cleanFullName = fullName.trim().take(60)
             require(cleanFullName.isNotEmpty()) { "Full name cannot be empty" }
 
-            val profileSnap = db.collection("profiles").document(currentUid).get().await()
-            val oldUsernameLower = profileSnap.getString("usernameLower").orEmpty()
+            val userSnap = db.collection("users").document(currentUid).get().await()
+            val oldUsernameLower = userSnap.getString("usernameLower")
+                ?: db.collection("profiles").document(currentUid).get().await().getString("usernameLower").orEmpty()
             if (oldUsernameLower != cleanUsername) {
                 path = "usernames/$cleanUsername"
                 val targetUnameSnap = db.collection("usernames").document(cleanUsername).get().await()
@@ -909,7 +957,6 @@ class SocialRepository(
                         val phoneE164 = oldUnameSnap.getString("phoneE164").orEmpty()
                         val salt = oldUnameSnap.getString("passwordSalt").orEmpty()
                         val hash = oldUnameSnap.getString("passwordHash").orEmpty()
-                        val verified = oldUnameSnap.getBoolean("verified") ?: false
                         if (phoneE164.isNotBlank() && salt.isNotBlank() && hash.isNotBlank()) {
                             db.collection("usernames").document(cleanUsername).set(
                                 mapOf(
@@ -918,7 +965,7 @@ class SocialRepository(
                                     "phoneE164" to phoneE164,
                                     "passwordSalt" to salt,
                                     "passwordHash" to hash,
-                                    "verified" to verified,
+                                    "verified" to false,
                                     "createdAt" to FieldValue.serverTimestamp(),
                                     "updatedAt" to FieldValue.serverTimestamp()
                                 )
@@ -935,7 +982,7 @@ class SocialRepository(
                 }
             }
 
-            path = "profiles/$currentUid"
+            path = "users/$currentUid"
             val updates = mutableMapOf<String, Any>(
                 "username" to cleanUsername,
                 "usernameLower" to cleanUsername,
@@ -946,8 +993,12 @@ class SocialRepository(
             )
             if (!avatarData.isNullOrBlank() && avatarData.length <= 350000) {
                 updates["avatarData"] = avatarData
+                updates["profilePic"] = avatarData
             }
-            db.collection("profiles").document(currentUid).update(updates).await()
+            db.collection("users").document(currentUid).update(updates).await()
+            runCatching {
+                db.collection("profiles").document(currentUid).update(updates).await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -1005,12 +1056,20 @@ class SocialRepository(
             }
             docRef.set(payload).await()
 
-            db.collection("profiles").document(uid).update(
+            db.collection("users").document(uid).update(
                 mapOf(
                     "postsCount" to FieldValue.increment(1L),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
+            runCatching {
+                db.collection("profiles").document(uid).update(
+                    mapOf(
+                        "postsCount" to FieldValue.increment(1L),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
 
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -1067,7 +1126,11 @@ class SocialRepository(
         mediaType: String,
         mediaData: String,
         textContent: String,
-        bgGradient: String
+        bgGradient: String,
+        filterName: String = StoryFilter.NORMAL.id,
+        songTitle: String = "",
+        songArtist: String = "",
+        songUrl: String = ""
     ): Result<Unit> {
         var path = "stories"
         return try {
@@ -1075,16 +1138,19 @@ class SocialRepository(
             val docRef = db.collection("stories").document()
             path = docRef.path
             val expiresAtMillis = System.currentTimeMillis() + 24L * 3_600_000L
+            val canonicalFilter = StoryFilter.fromId(filterName).id
             val payload = mutableMapOf<String, Any>(
                 "userId" to uid,
                 "authorUsername" to author.username.ifBlank { "star_user" }.take(30),
                 "mediaType" to mediaType,
+                "filterName" to canonicalFilter,
                 "visibility" to "public",
                 "expiresAtMillis" to expiresAtMillis,
                 "createdAt" to FieldValue.serverTimestamp()
             )
-            if (author.avatarData.isNotBlank() && author.avatarData.length <= 350000) {
-                payload["authorAvatar"] = author.avatarData
+            val avatar = author.effectiveAvatar
+            if (avatar.isNotBlank() && avatar.length <= 350000) {
+                payload["authorAvatar"] = avatar
             }
             if (mediaData.isNotBlank()) {
                 payload["mediaData"] = mediaData.take(700000)
@@ -1094,6 +1160,15 @@ class SocialRepository(
             }
             if (bgGradient.isNotBlank()) {
                 payload["bgGradient"] = bgGradient.take(40)
+            }
+            if (songTitle.isNotBlank()) {
+                payload["songTitle"] = songTitle.trim().take(100)
+            }
+            if (songArtist.isNotBlank()) {
+                payload["songArtist"] = songArtist.trim().take(80)
+            }
+            if (songUrl.isNotBlank()) {
+                payload["songUrl"] = songUrl.trim().take(500)
             }
             docRef.set(payload).await()
             Result.success(Unit)
@@ -1265,20 +1340,36 @@ class SocialRepository(
                 ).await()
             }
 
-            db.collection("profiles").document(currentUid).update(
+            db.collection("users").document(currentUid).update(
                 mapOf(
                     "followingCount" to FieldValue.increment(delta),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
+            runCatching {
+                db.collection("profiles").document(currentUid).update(
+                    mapOf(
+                        "followingCount" to FieldValue.increment(delta),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
 
             if (!targetProfile.userId.startsWith("sample_")) {
-                db.collection("profiles").document(targetProfile.userId).update(
+                db.collection("users").document(targetProfile.userId).update(
                     mapOf(
                         "followersCount" to FieldValue.increment(delta),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
+                runCatching {
+                    db.collection("profiles").document(targetProfile.userId).update(
+                        mapOf(
+                            "followersCount" to FieldValue.increment(delta),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+                }
 
                 if (!currentlyFollowing && actor != null) {
                     sendNotification(
@@ -1308,13 +1399,21 @@ class SocialRepository(
                 .collection("followRequests").document(request.requesterId)
                 .delete().await()
 
-            path = "profiles/$currentUid"
-            db.collection("profiles").document(currentUid).update(
+            path = "users/$currentUid"
+            db.collection("users").document(currentUid).update(
                 mapOf(
                     "followersCount" to FieldValue.increment(1L),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
+            runCatching {
+                db.collection("profiles").document(currentUid).update(
+                    mapOf(
+                        "followersCount" to FieldValue.increment(1L),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
 
             if (actor != null && request.requesterId != currentUid) {
                 sendNotification(

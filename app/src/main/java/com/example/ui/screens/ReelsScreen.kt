@@ -130,7 +130,7 @@ fun ReelsScreen(
                 isLiked = reel.id in likedIds,
                 isFollowing = reel.userId in followingIds,
                 isOwnReel = reel.userId == currentUserId,
-                isAuthorVerified = authorProfile.verified,
+                isAuthorVerified = authorProfile.effectiveVerified,
                 isPlayingPage = isPageActive,
                 isMuted = isMuted,
                 onToggleMute = { isMuted = !isMuted },
@@ -357,7 +357,7 @@ private fun ReelPage(
                         modifier = Modifier.size(32.dp)
                     )
                 }
-                val count = reel.likesCount + if (isLiked && reel.id.startsWith("sample_")) 1L else 0L
+                val count = reel.likesCount.coerceAtLeast(0L)
                 Text(
                     text = formatCompactCount(count),
                     style = MaterialTheme.typography.labelMedium,
