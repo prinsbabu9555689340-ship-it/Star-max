@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GridOn
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
@@ -79,8 +80,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.firebase.MediaUtils
 import com.example.data.model.Post
+import com.example.data.model.SavedAccountRecord
 import com.example.data.model.ThemeMode
 import com.example.data.model.UserProfile
+import com.example.ui.components.AccountSwitcherBottomSheet
 import com.example.ui.components.PostCard
 import com.example.ui.components.StarMaxMediaImage
 import com.example.ui.components.UserAvatar
@@ -110,6 +113,9 @@ fun ProfileScreen(
     onSaveToggle: (String) -> Unit,
     onArchiveToggle: (Post) -> Unit = {},
     onOpenSettingsAndActivity: () -> Unit = {},
+    savedAccounts: List<SavedAccountRecord> = emptyList(),
+    onSwitchAccount: (SavedAccountRecord) -> Unit = {},
+    onAddAccount: () -> Unit = {},
     onBack: (() -> Unit)? = null
 ) {
     if (onBack != null) {
@@ -119,6 +125,7 @@ fun ProfileScreen(
     val extended = LocalStarMaxColors.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var showEditSheet by remember { mutableStateOf(false) }
+    var showAccountSwitcher by remember { mutableStateOf(false) }
     var inspectedPost by remember { mutableStateOf<Post?>(null) }
 
     val userPosts = remember(posts, profile.userId) {
@@ -150,31 +157,55 @@ fun ProfileScreen(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
             }
-            if (profile.isPrivate) {
-                Icon(
-                    imageVector = Icons.Filled.Lock,
-                    contentDescription = "Private account",
-                    modifier = Modifier
-                        .padding(end = 6.dp)
-                        .size(16.dp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (isOwnProfile) {
+                            Modifier
+                                .clickable { showAccountSwitcher = true }
+                                .padding(vertical = 8.dp, horizontal = 4.dp)
+                                .testTag("profile_account_switcher")
+                        } else {
+                            Modifier
+                        }
+                    )
+            ) {
+                if (profile.isPrivate) {
+                    Icon(
+                        imageVector = Icons.Filled.Lock,
+                        contentDescription = "Private account",
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .size(16.dp)
+                    )
+                }
+                Text(
+                    text = profile.username.ifBlank { "star_user" },
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
+                if (profile.verified) {
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Icon(
+                        imageVector = Icons.Filled.Verified,
+                        contentDescription = "Verified",
+                        tint = extended.verifiedBlue,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                if (isOwnProfile) {
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Switch account",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
-            Text(
-                text = profile.username.ifBlank { "star_user" },
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (profile.verified) {
-                Spacer(modifier = Modifier.width(5.dp))
-                Icon(
-                    imageVector = Icons.Filled.Verified,
-                    contentDescription = "Verified",
-                    tint = extended.verifiedBlue,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            Spacer(modifier = Modifier.weight(1f))
 
             if (isOwnProfile) {
                 IconButton(onClick = onCycleTheme) {
@@ -413,6 +444,28 @@ fun ProfileScreen(
                 onSaveProfileEdits(username, fullName, bio, website, avatarData)
                 showEditSheet = false
             }
+        )
+    }
+
+    if (showAccountSwitcher && isOwnProfile) {
+        val displayAccounts = savedAccounts.ifEmpty {
+            listOf(
+                SavedAccountRecord(
+                    uid = profile.userId,
+                    slotName = "",
+                    username = profile.username,
+                    fullName = profile.fullName,
+                    avatarData = profile.avatarData,
+                    verified = profile.verified
+                )
+            )
+        }
+        AccountSwitcherBottomSheet(
+            activeUserId = profile.userId,
+            accounts = displayAccounts,
+            onSelectAccount = onSwitchAccount,
+            onAddAccount = onAddAccount,
+            onDismiss = { showAccountSwitcher = false }
         )
     }
 

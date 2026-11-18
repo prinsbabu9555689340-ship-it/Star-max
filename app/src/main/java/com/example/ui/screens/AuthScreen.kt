@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -11,29 +14,45 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Forum
-import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,53 +62,221 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import com.example.R
-import com.example.data.firebase.attemptAutoSignIn
+import com.example.data.firebase.AccountSessionManager
+import com.example.data.firebase.PasswordHasher
+import com.example.data.firebase.PhoneAuthHelper
+import com.example.data.firebase.PhoneFormatUtils
+import com.example.data.firebase.SocialRepository
 import com.example.data.firebase.onGoogleSignInClicked
+import com.example.data.model.AuthLookupRecord
+import com.example.data.model.SavedAccountRecord
 import com.example.ui.components.StarMaxWordmark
 import com.example.ui.theme.LocalStarMaxColors
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.PhoneAuthCredential
+import com.google.firebase.auth.PhoneAuthProvider
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+private enum class AuthTab(val label: String) {
+    LOG_IN("Log In"),
+    SIGN_UP("Sign Up")
+}
 
 @Composable
 fun AuthScreen(
-    onAuthSuccess: () -> Unit,
+    accountSessionManager: AccountSessionManager,
+    isAddAccountMode: Boolean = false,
+    onAccountAuthenticated: (SavedAccountRecord) -> Unit,
+    onCancelAddAccount: (() -> Unit)? = null,
     onEnterDemoMode: (() -> Unit)? = null
 ) {
+    if (isAddAccountMode && onCancelAddAccount != null) {
+        BackHandler(onBack = onCancelAddAccount)
+    }
+
     val context = LocalContext.current
+    val activity = context as? Activity
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) {
         runCatching { CredentialManager.create(context) }.getOrNull()
     }
     val extended = LocalStarMaxColors.current
 
-    var isLoading by remember { mutableStateOf(false) }
-    var isCheckingAutoSignIn by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val slotName = remember(isAddAccountMode) {
+        accountSessionManager.allocateSlotForAccount()
+    }
+    val slotAuth = remember(slotName) { accountSessionManager.resolveAuth(slotName) }
+    val slotDb = remember(slotName) { accountSessionManager.resolveFirestore(slotName) }
+    val slotRepository = remember(slotDb, slotAuth) {
+        slotDb?.let { SocialRepository(db = it, auth = slotAuth) }
+    }
 
-    LaunchedEffect(Unit) {
-        attemptAutoSignIn(
-            context = context,
-            credentialManager = credentialManager,
-            onAuthSuccess = {
-                isCheckingAutoSignIn = false
-                onAuthSuccess()
+    var selectedTab by remember { mutableStateOf(if (isAddAccountMode) AuthTab.SIGN_UP else AuthTab.LOG_IN) }
+    var isBusy by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var infoMessage by remember { mutableStateOf<String?>(null) }
+
+    // Sign Up state
+    var fullName by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var signUpPassword by remember { mutableStateOf("") }
+    var signUpPasswordVisible by remember { mutableStateOf(false) }
+    var phoneDigits by remember { mutableStateOf("") }
+
+    // Log In state
+    var loginIdentifier by remember { mutableStateOf("") }
+    var loginPassword by remember { mutableStateOf("") }
+    var loginPasswordVisible by remember { mutableStateOf(false) }
+    var pendingLoginLookup by remember { mutableStateOf<AuthLookupRecord?>(null) }
+
+    // Shared OTP state
+    var verificationId by remember { mutableStateOf<String?>(null) }
+    var resendToken by remember { mutableStateOf<PhoneAuthProvider.ForceResendingToken?>(null) }
+    var otpCode by remember { mutableStateOf("") }
+    var otpResendSeconds by remember { mutableIntStateOf(0) }
+    var activeOtpPhoneE164 by remember { mutableStateOf("") }
+    var otpFlowIsSignUp by remember { mutableStateOf(true) }
+
+    LaunchedEffect(otpResendSeconds) {
+        if (otpResendSeconds > 0) {
+            delay(1000L)
+            otpResendSeconds -= 1
+        }
+    }
+
+    fun resetOtpFlow() {
+        verificationId = null
+        resendToken = null
+        otpCode = ""
+        otpResendSeconds = 0
+        activeOtpPhoneE164 = ""
+        pendingLoginLookup = null
+    }
+
+    suspend fun finalizePhoneCredential(credential: PhoneAuthCredential) {
+        val auth = slotAuth ?: run {
+            isBusy = false
+            errorMessage = "Firebase Authentication is unavailable."
+            return
+        }
+        val repo = slotRepository ?: run {
+            isBusy = false
+            errorMessage = "Database connection is unavailable."
+            return
+        }
+
+        val signInRes = PhoneAuthHelper.signInWithPhoneCredential(auth, credential)
+        val user = signInRes.getOrElse { err ->
+            isBusy = false
+            errorMessage = err.localizedMessage ?: "OTP verification failed."
+            return
+        }
+
+        if (otpFlowIsSignUp) {
+            val digits10 = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneDigits) ?: phoneDigits
+            val regRes = repo.completePhoneRegistration(
+                user = user,
+                fullName = fullName,
+                username = username,
+                phoneDigits10 = digits10,
+                password = signUpPassword
+            )
+            regRes.onSuccess { createdProfile ->
+                isBusy = false
+                onAccountAuthenticated(
+                    SavedAccountRecord(
+                        uid = user.uid,
+                        slotName = slotName,
+                        username = createdProfile.username,
+                        fullName = createdProfile.fullName,
+                        avatarData = createdProfile.avatarData,
+                        phoneE164 = user.phoneNumber ?: PhoneFormatUtils.toIndianE164(digits10),
+                        verified = createdProfile.verified,
+                        authProvider = "phone"
+                    )
+                )
+            }.onFailure { err ->
+                runCatching { auth.signOut() }
+                isBusy = false
+                errorMessage = err.localizedMessage ?: "Failed to create verified account."
+            }
+        } else {
+            val lookup = pendingLoginLookup
+            if (lookup != null && lookup.userId != user.uid) {
+                runCatching { auth.signOut() }
+                isBusy = false
+                errorMessage = "Verified number does not match the selected account."
+                return
+            }
+            repo.ensureUserProfile(user)
+            isBusy = false
+            onAccountAuthenticated(
+                SavedAccountRecord(
+                    uid = user.uid,
+                    slotName = slotName,
+                    username = lookup?.usernameLower ?: user.displayName ?: "star_user",
+                    fullName = user.displayName ?: lookup?.usernameLower ?: "Star Creator",
+                    avatarData = user.photoUrl?.toString().orEmpty(),
+                    phoneE164 = user.phoneNumber ?: lookup?.phoneE164.orEmpty(),
+                    verified = !user.phoneNumber.isNullOrBlank() || (lookup?.verified == true),
+                    authProvider = "phone"
+                )
+            )
+        }
+    }
+
+    fun triggerOtpSend(
+        targetPhoneE164: String,
+        isSignUp: Boolean,
+        useResendToken: PhoneAuthProvider.ForceResendingToken? = null
+    ) {
+        val currentActivity = activity ?: run {
+            isBusy = false
+            errorMessage = "Phone verification requires an active screen."
+            return
+        }
+        val auth = slotAuth ?: run {
+            isBusy = false
+            errorMessage = "Firebase Authentication is unavailable."
+            return
+        }
+        otpFlowIsSignUp = isSignUp
+        activeOtpPhoneE164 = targetPhoneE164
+        PhoneAuthHelper.sendVerificationOtp(
+            activity = currentActivity,
+            auth = auth,
+            phoneE164 = targetPhoneE164,
+            resendToken = useResendToken,
+            onAutoVerified = { credential ->
+                scope.launch { finalizePhoneCredential(credential) }
             },
-            onUnauthenticated = {
-                isCheckingAutoSignIn = false
+            onCodeSent = { verId, token ->
+                verificationId = verId
+                resendToken = token
+                otpResendSeconds = 30
+                isBusy = false
+                infoMessage = "6-digit SMS OTP sent to $targetPhoneE164"
             },
-            scope = scope
+            onFailed = { msg ->
+                isBusy = false
+                errorMessage = msg
+            }
         )
     }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background
-    ) { innerPadding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -97,25 +284,47 @@ fun AuthScreen(
                 .background(
                     Brush.verticalGradient(
                         listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                             MaterialTheme.colorScheme.background,
-                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f)
+                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.08f)
                         )
                     )
-                ),
-            contentAlignment = Alignment.Center
+                )
+                .imePadding(),
+            contentAlignment = Alignment.TopCenter
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 460.dp)
-                    .padding(horizontal = 28.dp),
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                if (isAddAccountMode && onCancelAddAccount != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = onCancelAddAccount,
+                            modifier = Modifier.testTag("add_account_cancel_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to profile")
+                        }
+                        Text(
+                            text = "Add another account",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
                 Surface(
-                    shape = RoundedCornerShape(28.dp),
-                    shadowElevation = 12.dp,
-                    modifier = Modifier.size(92.dp)
+                    shape = RoundedCornerShape(22.dp),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.size(72.dp)
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.ic_starmax_mark),
@@ -124,155 +333,493 @@ fun AuthScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 StarMaxWordmark()
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Share moments, 24h stories, vertical Reels, and live DMs with your circle.",
-                    style = MaterialTheme.typography.bodyLarge,
+                    text = "Real mobile-verified profiles, Stories, Reels & DMs",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
+                Spacer(modifier = Modifier.height(16.dp))
 
-                Spacer(modifier = Modifier.height(28.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    AuthTab.entries.forEachIndexed { index, tab ->
+                        SegmentedButton(
+                            selected = selectedTab == tab,
+                            onClick = {
+                                if (!isBusy && selectedTab != tab) {
+                                    selectedTab = tab
+                                    errorMessage = null
+                                    infoMessage = null
+                                    resetOtpFlow()
+                                }
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index = index, count = AuthTab.entries.size),
+                            modifier = Modifier.testTag("auth_tab_${tab.name.lowercase()}")
+                        ) {
+                            Text(tab.label)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                if (errorMessage != null) {
+                    StatusBanner(text = errorMessage.orEmpty(), isError = true)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+                if (infoMessage != null) {
+                    StatusBanner(text = infoMessage.orEmpty(), isError = false)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 Surface(
-                    shape = RoundedCornerShape(22.dp),
+                    shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 2.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
                         modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        FeatureRow(Icons.Filled.CameraAlt, "Photo Feed & 24h Stories")
-                        FeatureRow(Icons.Filled.PlayCircle, "Full-Screen Vertical Reels")
-                        FeatureRow(Icons.Filled.Forum, "Real-Time Direct Messaging")
+                        if (selectedTab == AuthTab.SIGN_UP) {
+                            OutlinedTextField(
+                                value = fullName,
+                                onValueChange = { fullName = it },
+                                label = { Text("Full Name") },
+                                leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
+                                singleLine = true,
+                                enabled = verificationId == null && !isBusy,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("signup_fullname_input")
+                            )
+                            OutlinedTextField(
+                                value = username,
+                                onValueChange = { username = it.filter { ch -> ch.isLetterOrDigit() || ch == '.' || ch == '_' || ch == '-' } },
+                                label = { Text("Username") },
+                                prefix = { Text("@") },
+                                supportingText = { Text("Unique handle (min 3 chars)") },
+                                singleLine = true,
+                                enabled = verificationId == null && !isBusy,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("signup_username_input")
+                            )
+                            OutlinedTextField(
+                                value = signUpPassword,
+                                onValueChange = { signUpPassword = it },
+                                label = { Text("Password (min 6 chars)") },
+                                leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                                trailingIcon = {
+                                    IconButton(onClick = { signUpPasswordVisible = !signUpPasswordVisible }) {
+                                        Icon(
+                                            imageVector = if (signUpPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                            contentDescription = "Toggle password visibility"
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (signUpPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                singleLine = true,
+                                enabled = verificationId == null && !isBusy,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("signup_password_input")
+                            )
+                            OutlinedTextField(
+                                value = phoneDigits,
+                                onValueChange = { input ->
+                                    phoneDigits = input.filter { it.isDigit() }.take(10)
+                                },
+                                label = { Text("Mobile Number (10 digits)") },
+                                leadingIcon = { Icon(Icons.Filled.PhoneAndroid, contentDescription = null) },
+                                prefix = {
+                                    Text(
+                                        text = "+91 ",
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                singleLine = true,
+                                enabled = verificationId == null && !isBusy,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("signup_phone_input")
+                            )
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Verified,
+                                    contentDescription = null,
+                                    tint = extended.verifiedBlue,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Verified blue badge awarded automatically after SMS OTP.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            if (verificationId == null) {
+                                GradientPrimaryButton(
+                                    text = "Send OTP",
+                                    isLoading = isBusy,
+                                    enabled = !isBusy,
+                                    testTag = "send_otp_button",
+                                    onClick = {
+                                        errorMessage = null
+                                        infoMessage = null
+                                        val repo = slotRepository ?: run {
+                                            errorMessage = "Firebase is not configured in this build."
+                                            return@GradientPrimaryButton
+                                        }
+                                        val cleanName = fullName.trim()
+                                        val cleanUser = repo.sanitizeUsername(username)
+                                        val digits = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneDigits)
+                                        when {
+                                            cleanName.isEmpty() -> errorMessage = "Enter your full name."
+                                            cleanUser.length < 3 -> errorMessage = "Enter a username with at least 3 valid characters."
+                                            signUpPassword.length < 6 -> errorMessage = "Password must be at least 6 characters."
+                                            digits == null -> errorMessage = "Enter a valid 10-digit +91 mobile number."
+                                            else -> {
+                                                isBusy = true
+                                                scope.launch {
+                                                    val unameOk = repo.checkUsernameAvailable(cleanUser)
+                                                    if (unameOk.getOrNull() != true) {
+                                                        isBusy = false
+                                                        errorMessage = unameOk.exceptionOrNull()?.localizedMessage
+                                                            ?: "Username @$cleanUser is already taken."
+                                                        return@launch
+                                                    }
+                                                    val phoneOk = repo.checkPhoneAvailable(digits)
+                                                    if (phoneOk.getOrNull() != true) {
+                                                        isBusy = false
+                                                        errorMessage = phoneOk.exceptionOrNull()?.localizedMessage
+                                                            ?: "This mobile number is already registered. Please log in."
+                                                        return@launch
+                                                    }
+                                                    triggerOtpSend(
+                                                        targetPhoneE164 = PhoneFormatUtils.toIndianE164(digits),
+                                                        isSignUp = true
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        } else {
+                            // LOG IN MODE
+                            OutlinedTextField(
+                                value = loginIdentifier,
+                                onValueChange = { loginIdentifier = it },
+                                label = { Text("Mobile Number (+91) or Username") },
+                                leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
+                                singleLine = true,
+                                enabled = verificationId == null && !isBusy,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("login_identifier_input")
+                            )
+                            OutlinedTextField(
+                                value = loginPassword,
+                                onValueChange = { loginPassword = it },
+                                label = { Text("Password") },
+                                leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                                trailingIcon = {
+                                    IconButton(onClick = { loginPasswordVisible = !loginPasswordVisible }) {
+                                        Icon(
+                                            imageVector = if (loginPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                            contentDescription = "Toggle password visibility"
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (loginPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                singleLine = true,
+                                enabled = verificationId == null && !isBusy,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("login_password_input")
+                            )
+
+                            if (verificationId == null) {
+                                GradientPrimaryButton(
+                                    text = "Log In",
+                                    isLoading = isBusy,
+                                    enabled = !isBusy,
+                                    testTag = "login_submit_button",
+                                    onClick = {
+                                        errorMessage = null
+                                        infoMessage = null
+                                        val repo = slotRepository ?: run {
+                                            errorMessage = "Firebase is not configured in this build."
+                                            return@GradientPrimaryButton
+                                        }
+                                        if (loginIdentifier.isBlank() || loginPassword.isBlank()) {
+                                            errorMessage = "Enter your mobile number or username and password."
+                                            return@GradientPrimaryButton
+                                        }
+                                        isBusy = true
+                                        scope.launch {
+                                            val lookup = repo.lookupAccountForLogin(loginIdentifier).getOrNull()
+                                            if (lookup == null) {
+                                                isBusy = false
+                                                errorMessage = "No account found matching \"$loginIdentifier\"."
+                                                return@launch
+                                            }
+                                            if (!PasswordHasher.verifyPassword(loginPassword, lookup.passwordSalt, lookup.passwordHash)) {
+                                                isBusy = false
+                                                errorMessage = "Incorrect password. Please try again."
+                                                return@launch
+                                            }
+                                            val existingSaved = accountSessionManager.savedAccounts.value
+                                                .firstOrNull { it.uid == lookup.userId }
+                                            if (existingSaved != null && accountSessionManager.switchToSavedAccount(existingSaved.uid)) {
+                                                isBusy = false
+                                                onAccountAuthenticated(existingSaved)
+                                                return@launch
+                                            }
+                                            pendingLoginLookup = lookup
+                                            infoMessage = "Password verified. Sending SMS OTP to ${PhoneFormatUtils.maskPhone(lookup.phoneE164)}..."
+                                            triggerOtpSend(
+                                                targetPhoneE164 = lookup.phoneE164,
+                                                isSignUp = false
+                                            )
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        // OTP Verification Section (shared for Sign Up & Login OTP confirmation)
+                        AnimatedVisibility(visible = verificationId != null) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                HorizontalDivider(color = extended.subtleDivider)
+                                OutlinedTextField(
+                                    value = otpCode,
+                                    onValueChange = { input ->
+                                        otpCode = input.filter { it.isDigit() }.take(6)
+                                    },
+                                    label = { Text("Enter 6-digit SMS OTP") },
+                                    leadingIcon = { Icon(Icons.Filled.Sms, contentDescription = null) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                    singleLine = true,
+                                    enabled = !isBusy,
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("otp_code_input")
+                                )
+                                GradientPrimaryButton(
+                                    text = if (otpFlowIsSignUp) "Verify OTP & Create Account" else "Verify OTP & Log In",
+                                    isLoading = isBusy,
+                                    enabled = !isBusy && otpCode.length == 6,
+                                    testTag = "verify_otp_button",
+                                    onClick = {
+                                        val verId = verificationId ?: return@GradientPrimaryButton
+                                        errorMessage = null
+                                        isBusy = true
+                                        val credential = PhoneAuthHelper.buildOtpCredential(verId, otpCode)
+                                        scope.launch { finalizePhoneCredential(credential) }
+                                    }
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    TextButton(
+                                        onClick = { resetOtpFlow(); errorMessage = null; infoMessage = null },
+                                        enabled = !isBusy
+                                    ) {
+                                        Text("Edit details")
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            if (activeOtpPhoneE164.isNotBlank()) {
+                                                errorMessage = null
+                                                isBusy = true
+                                                triggerOtpSend(
+                                                    targetPhoneE164 = activeOtpPhoneE164,
+                                                    isSignUp = otpFlowIsSignUp,
+                                                    useResendToken = resendToken
+                                                )
+                                            }
+                                        },
+                                        enabled = otpResendSeconds == 0 && !isBusy,
+                                        modifier = Modifier.testTag("resend_otp_button")
+                                    ) {
+                                        Text(
+                                            if (otpResendSeconds > 0) "Resend OTP in ${otpResendSeconds}s" else "Resend OTP"
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(28.dp))
-
-                if (errorMessage != null) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 14.dp)
-                    ) {
-                        Text(
-                            text = errorMessage.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(12.dp),
-                            textAlign = TextAlign.Center
-                        )
-                    }
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HorizontalDivider(modifier = Modifier.weight(1f), color = extended.subtleDivider)
+                    Text(
+                        text = "  OR  ",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider(modifier = Modifier.weight(1f), color = extended.subtleDivider)
                 }
+                Spacer(modifier = Modifier.height(14.dp))
 
-                Button(
+                OutlinedButton(
                     onClick = {
                         errorMessage = null
-                        isLoading = true
+                        infoMessage = null
+                        isBusy = true
                         onGoogleSignInClicked(
                             context = context,
                             credentialManager = credentialManager,
-                            onAuthSuccess = {
-                                isLoading = false
-                                onAuthSuccess()
+                            targetAuth = slotAuth,
+                            onAuthSuccess = { user: FirebaseUser ->
+                                scope.launch {
+                                    slotRepository?.ensureUserProfile(user)
+                                    isBusy = false
+                                    val handle = user.displayName
+                                        ?.lowercase()
+                                        ?.replace(Regex("[^a-z0-9._]"), "")
+                                        ?.take(24)
+                                        ?.ifBlank { "star_${user.uid.take(6)}" }
+                                        ?: "star_${user.uid.take(6)}"
+                                    onAccountAuthenticated(
+                                        SavedAccountRecord(
+                                            uid = user.uid,
+                                            slotName = slotName,
+                                            username = handle,
+                                            fullName = user.displayName ?: "Star Creator",
+                                            avatarData = user.photoUrl?.toString().orEmpty(),
+                                            phoneE164 = user.phoneNumber.orEmpty(),
+                                            verified = !user.phoneNumber.isNullOrBlank(),
+                                            authProvider = "google"
+                                        )
+                                    )
+                                }
                             },
                             onAuthError = { msg ->
-                                isLoading = false
+                                isBusy = false
                                 errorMessage = msg
                             },
                             scope = scope,
-                            onAuthCancelled = {
-                                isLoading = false
-                            }
+                            onAuthCancelled = { isBusy = false }
                         )
                     },
-                    enabled = !isLoading && !isCheckingAutoSignIn,
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(vertical = 15.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                    enabled = !isBusy,
+                    shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(extended.brandGradientBrush)
+                        .height(50.dp)
                         .testTag("google_sign_in_button")
                 ) {
-                    if (isLoading || isCheckingAutoSignIn) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            color = Color.White,
-                            strokeWidth = 2.5.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.AutoAwesome,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Sign in with Google",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = Color.White
-                        )
-                    }
+                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Continue with Google")
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-                if (onEnterDemoMode != null) {
+                if (onEnterDemoMode != null && !accountSessionManager.isFirebaseConfigured()) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     TextButton(
                         onClick = onEnterDemoMode,
                         modifier = Modifier.testTag("enter_demo_mode_button")
                     ) {
-                        Text(
-                            text = if (credentialManager == null) {
-                                "Continue in Offline Demo Mode"
-                            } else {
-                                "Explore Local Preview"
-                            },
-                            style = MaterialTheme.typography.labelLarge
-                        )
+                        Text("Explore Local Preview")
                     }
                 }
-                Text(
-                    text = "Synced securely with Cloud Firestore",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
 }
 
 @Composable
-private fun FeatureRow(icon: ImageVector, label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
+private fun StatusBanner(text: String, isError: Boolean) {
+    Surface(
+        color = if (isError) {
+            MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+        } else {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+        },
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(12.dp),
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun GradientPrimaryButton(
+    text: String,
+    isLoading: Boolean,
+    enabled: Boolean,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    val extended = LocalStarMaxColors.current
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(14.dp),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(50.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (enabled) extended.brandGradientBrush
+                else Brush.horizontalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.surfaceVariant,
+                        MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+            )
+            .testTag(testTag)
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = Color.White,
+                strokeWidth = 2.5.dp
+            )
+        } else {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (enabled) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold
             )
         }
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface
-        )
     }
 }

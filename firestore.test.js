@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const {
   initializeTestEnvironment,
   assertFails,
@@ -388,4 +390,104 @@ test("User settings persistence, private follow requests, and archived posts enf
   );
   await assertFails(bobDb.collection("posts").doc("post_arch").get());
 });
+
+test("Phone-verified profile badge, unique username/phone registries, and anti-spoofing rules", async () => {
+  const phoneAliceDb = testEnv.authenticatedContext(ALICE_UID, { phone_number: "+919876543210" }).firestore();
+  const nonPhoneBobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const now = new Date(Date.now() - 5000);
+
+  // Non-phone user cannot self-assign verified: true
+  await assertFails(
+    nonPhoneBobDb.collection("profiles").doc(BOB_UID).set({
+      userId: BOB_UID,
+      username: "bob_fake",
+      usernameLower: "bob_fake",
+      fullName: "Bob Fake",
+      bio: "",
+      website: "",
+      visibility: "public",
+      postsCount: 0,
+      followersCount: 0,
+      followingCount: 0,
+      verified: true,
+      online: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  // Phone-verified user CAN create verified profile + claim username & phone number
+  await assertSucceeds(
+    phoneAliceDb.collection("profiles").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      username: "alice.star",
+      usernameLower: "alice.star",
+      fullName: "Alice Star",
+      bio: "Verified creator",
+      website: "",
+      visibility: "public",
+      postsCount: 0,
+      followersCount: 0,
+      followingCount: 0,
+      verified: true,
+      online: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  await assertSucceeds(
+    phoneAliceDb.collection("usernames").doc("alice.star").set({
+      userId: ALICE_UID,
+      usernameLower: "alice.star",
+      phoneE164: "+919876543210",
+      passwordSalt: "random_salt_1234",
+      passwordHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      verified: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  await assertSucceeds(
+    phoneAliceDb.collection("phoneRegistry").doc("9876543210").set({
+      userId: ALICE_UID,
+      phoneDigits: "9876543210",
+      phoneE164: "+919876543210",
+      usernameLower: "alice.star",
+      createdAt: now,
+    })
+  );
+
+  // Unauthenticated client can check single username/phone doc (for login/dup check) but CANNOT list collections
+  await assertSucceeds(unauthDb.collection("usernames").doc("alice.star").get());
+  await assertSucceeds(unauthDb.collection("phoneRegistry").doc("9876543210").get());
+  await assertFails(unauthDb.collection("usernames").get());
+  await assertFails(unauthDb.collection("phoneRegistry").get());
+
+  // Bob cannot steal or overwrite Alice's claimed username or phone number
+  await assertFails(
+    nonPhoneBobDb.collection("usernames").doc("alice.star").set({
+      userId: BOB_UID,
+      usernameLower: "alice.star",
+      phoneE164: "+919999999999",
+      passwordSalt: "other_salt_1234",
+      passwordHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      verified: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+  await assertFails(
+    nonPhoneBobDb.collection("phoneRegistry").doc("9876543210").set({
+      userId: BOB_UID,
+      phoneDigits: "9876543210",
+      phoneE164: "+919876543210",
+      usernameLower: "bob_other",
+      createdAt: now,
+    })
+  );
+});
+
 

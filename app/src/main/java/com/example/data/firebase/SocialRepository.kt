@@ -3,6 +3,7 @@ package com.example.data.firebase
 import android.content.Context
 import android.util.Log
 import com.example.R
+import com.example.data.model.AuthLookupRecord
 import com.example.data.model.ChatMessage
 import com.example.data.model.Comment
 import com.example.data.model.Conversation
@@ -19,6 +20,7 @@ import com.google.firebase.Firebase
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
@@ -64,16 +66,130 @@ class SocialRepository(
             throw error
         }
 
-    suspend fun ensureUserProfile(user: FirebaseUser): Result<Unit> {
+    fun sanitizeUsername(raw: String): String {
+        val cleaned = raw.trim()
+            .removePrefix("@")
+            .lowercase()
+            .replace(" ", "_")
+            .replace(Regex("[^a-z0-9._-]"), "")
+            .replace(Regex("\\.{2,}"), ".")
+            .trim('.')
+            .take(30)
+        return cleaned
+    }
+
+    suspend fun checkUsernameAvailable(username: String): Result<Boolean> {
+        val cleanLower = sanitizeUsername(username)
+        if (cleanLower.length < 3) {
+            return Result.failure(IllegalArgumentException("Username must be at least 3 characters (letters, numbers, . or _)."))
+        }
+        val path = "usernames/$cleanLower"
+        return try {
+            val snap = db.collection("usernames").document(cleanLower).get().await()
+            Result.success(!snap.exists())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.GET, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun checkPhoneAvailable(phoneDigits10: String): Result<Boolean> {
+        val digits = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneDigits10)
+            ?: return Result.failure(IllegalArgumentException("Enter a valid 10-digit Indian mobile number."))
+        val path = "phoneRegistry/$digits"
+        return try {
+            val snap = db.collection("phoneRegistry").document(digits).get().await()
+            Result.success(!snap.exists())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.GET, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun lookupAccountForLogin(identifier: String): Result<AuthLookupRecord?> {
+        val trimmed = identifier.trim()
+        if (trimmed.isBlank()) return Result.success(null)
+        val digits10 = PhoneFormatUtils.normalizeIndianPhoneDigits(trimmed)
+        var opPath = "usernames/$trimmed"
+        return try {
+            val usernameLower = if (digits10 != null) {
+                opPath = "phoneRegistry/$digits10"
+                val phoneSnap = db.collection("phoneRegistry").document(digits10).get().await()
+                if (!phoneSnap.exists()) return Result.success(null)
+                phoneSnap.getString("usernameLower").orEmpty()
+            } else {
+                sanitizeUsername(trimmed)
+            }
+            if (usernameLower.length < 2) return Result.success(null)
+            opPath = "usernames/$usernameLower"
+            val userSnap = db.collection("usernames").document(usernameLower).get().await()
+            if (!userSnap.exists()) return Result.success(null)
+            val record = AuthLookupRecord(
+                userId = userSnap.getString("userId").orEmpty(),
+                usernameLower = userSnap.getString("usernameLower").orEmpty(),
+                phoneE164 = userSnap.getString("phoneE164").orEmpty(),
+                passwordSalt = userSnap.getString("passwordSalt").orEmpty(),
+                passwordHash = userSnap.getString("passwordHash").orEmpty(),
+                verified = userSnap.getBoolean("verified") ?: false
+            )
+            Result.success(record.takeIf { it.userId.isNotBlank() && it.phoneE164.isNotBlank() })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.GET, opPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun completePhoneRegistration(
+        user: FirebaseUser,
+        fullName: String,
+        username: String,
+        phoneDigits10: String,
+        password: String
+    ): Result<UserProfile> {
         val uid = user.uid
         var opType = OperationType.GET
-        var opPath = "users/$uid"
+        var opPath = "phoneRegistry/$phoneDigits10"
         return try {
+            val cleanUsername = sanitizeUsername(username)
+            require(cleanUsername.length >= 3) { "Username must be at least 3 valid characters." }
+            val cleanFullName = fullName.trim().take(60)
+            require(cleanFullName.isNotEmpty()) { "Full name is required." }
+            val digits10 = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneDigits10)
+                ?: throw IllegalArgumentException("Valid 10-digit +91 mobile number required.")
+            require(password.length >= 6) { "Password must be at least 6 characters." }
+
+            val phoneE164 = user.phoneNumber?.takeIf { it.isNotBlank() }
+                ?: PhoneFormatUtils.toIndianE164(digits10)
+            val isPhoneVerified = !user.phoneNumber.isNullOrBlank()
+
+            val phoneDocRef = db.collection("phoneRegistry").document(digits10)
+            val existingPhone = phoneDocRef.get().await()
+            if (existingPhone.exists() && existingPhone.getString("userId") != uid) {
+                return Result.failure(
+                    IllegalStateException("This mobile number is already registered. Please log in instead.")
+                )
+            }
+
+            opPath = "usernames/$cleanUsername"
+            val unameDocRef = db.collection("usernames").document(cleanUsername)
+            val existingUname = unameDocRef.get().await()
+            if (existingUname.exists() && existingUname.getString("userId") != uid) {
+                return Result.failure(
+                    IllegalStateException("That username is already taken. Please pick another username.")
+                )
+            }
+
             val userDocRef = db.collection("users").document(uid)
+            opPath = userDocRef.path
             val userSnap = userDocRef.get().await()
             if (!userSnap.exists()) {
                 opType = OperationType.CREATE
-                opPath = userDocRef.path
                 userDocRef.set(
                     mapOf(
                         "userId" to uid,
@@ -85,7 +201,220 @@ class SocialRepository(
                         "notifyMessages" to true,
                         "dailyUsageSeconds" to 0L,
                         "usageDate" to ThemePreferences.todayDateKey(),
+                        "phoneE164" to phoneE164,
                         "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                opType = OperationType.UPDATE
+                userDocRef.update(
+                    mapOf(
+                        "phoneE164" to phoneE164,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+
+            val profileDocRef = db.collection("profiles").document(uid)
+            opType = OperationType.GET
+            opPath = profileDocRef.path
+            val profileSnap = profileDocRef.get().await()
+            if (!profileSnap.exists()) {
+                opType = OperationType.CREATE
+                profileDocRef.set(
+                    mapOf(
+                        "userId" to uid,
+                        "username" to cleanUsername,
+                        "usernameLower" to cleanUsername,
+                        "fullName" to cleanFullName,
+                        "bio" to "Verified on Star Max ✨",
+                        "website" to "",
+                        "avatarTint" to "#E1306C",
+                        "visibility" to "public",
+                        "isPrivate" to false,
+                        "postsCount" to 0L,
+                        "followersCount" to 0L,
+                        "followingCount" to 2L,
+                        "verified" to isPhoneVerified,
+                        "online" to true,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+
+                val followingCol = db.collection("users").document(uid).collection("following")
+                opPath = "users/$uid/following/sample_kai"
+                followingCol.document("sample_kai").set(
+                    mapOf(
+                        "targetUserId" to "sample_kai",
+                        "targetUsername" to "kai_tokyo",
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+                opPath = "users/$uid/following/sample_maya"
+                followingCol.document("sample_maya").set(
+                    mapOf(
+                        "targetUserId" to "sample_maya",
+                        "targetUsername" to "maya.lens",
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                opType = OperationType.UPDATE
+                val updateMap = mutableMapOf<String, Any>(
+                    "username" to cleanUsername,
+                    "usernameLower" to cleanUsername,
+                    "fullName" to cleanFullName,
+                    "online" to true,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (isPhoneVerified) {
+                    updateMap["verified"] = true
+                }
+                profileDocRef.update(updateMap).await()
+            }
+
+            val salt = PasswordHasher.generateSalt()
+            val hash = PasswordHasher.hashPassword(password, salt)
+
+            opPath = unameDocRef.path
+            if (!existingUname.exists()) {
+                opType = OperationType.CREATE
+                unameDocRef.set(
+                    mapOf(
+                        "userId" to uid,
+                        "usernameLower" to cleanUsername,
+                        "phoneE164" to phoneE164,
+                        "passwordSalt" to salt,
+                        "passwordHash" to hash,
+                        "verified" to isPhoneVerified,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                opType = OperationType.UPDATE
+                unameDocRef.update(
+                    mapOf(
+                        "phoneE164" to phoneE164,
+                        "passwordSalt" to salt,
+                        "passwordHash" to hash,
+                        "verified" to isPhoneVerified,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+
+            opPath = phoneDocRef.path
+            if (!existingPhone.exists()) {
+                opType = OperationType.CREATE
+                phoneDocRef.set(
+                    mapOf(
+                        "userId" to uid,
+                        "phoneDigits" to digits10,
+                        "phoneE164" to phoneE164,
+                        "usernameLower" to cleanUsername,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                opType = OperationType.UPDATE
+                phoneDocRef.update(mapOf("usernameLower" to cleanUsername)).await()
+            }
+
+            runCatching {
+                user.updateProfile(
+                    UserProfileChangeRequest.Builder().setDisplayName(cleanFullName).build()
+                ).await()
+            }
+
+            Result.success(
+                UserProfile(
+                    userId = uid,
+                    username = cleanUsername,
+                    usernameLower = cleanUsername,
+                    fullName = cleanFullName,
+                    verified = isPhoneVerified,
+                    online = true
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "completePhoneRegistration failed at $opPath", e)
+            handleFirestoreError(e, opType, opPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateRegisteredPassword(
+        usernameLower: String,
+        newPassword: String
+    ): Result<Unit> {
+        val clean = sanitizeUsername(usernameLower)
+        val path = "usernames/$clean"
+        return try {
+            val uid = requireUserId()
+            require(newPassword.length >= 6) { "Password must be at least 6 characters." }
+            val ref = db.collection("usernames").document(clean)
+            val snap = ref.get().await()
+            if (!snap.exists() || snap.getString("userId") != uid) {
+                return Result.failure(IllegalStateException("Username password record not found for this account."))
+            }
+            val salt = PasswordHasher.generateSalt()
+            val hash = PasswordHasher.hashPassword(newPassword, salt)
+            ref.update(
+                mapOf(
+                    "passwordSalt" to salt,
+                    "passwordHash" to hash,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun ensureUserProfile(user: FirebaseUser): Result<Unit> {
+        val uid = user.uid
+        var opType = OperationType.GET
+        var opPath = "users/$uid"
+        val isPhoneVerified = !user.phoneNumber.isNullOrBlank()
+        return try {
+            val userDocRef = db.collection("users").document(uid)
+            val userSnap = userDocRef.get().await()
+            if (!userSnap.exists()) {
+                opType = OperationType.CREATE
+                opPath = userDocRef.path
+                val payload = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "themeMode" to ThemeMode.SYSTEM.wireValue,
+                    "isPrivate" to false,
+                    "notifyLikes" to true,
+                    "notifyComments" to true,
+                    "notifyFollowers" to true,
+                    "notifyMessages" to true,
+                    "dailyUsageSeconds" to 0L,
+                    "usageDate" to ThemePreferences.todayDateKey(),
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                val phone = user.phoneNumber.orEmpty()
+                if (phone.isNotBlank()) {
+                    payload["phoneE164"] = phone
+                }
+                userDocRef.set(payload).await()
+            } else if (!user.phoneNumber.isNullOrBlank() && userSnap.getString("phoneE164").isNullOrBlank()) {
+                opType = OperationType.UPDATE
+                opPath = userDocRef.path
+                userDocRef.update(
+                    mapOf(
+                        "phoneE164" to user.phoneNumber.orEmpty(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
@@ -117,7 +446,7 @@ class SocialRepository(
                     "postsCount" to 0L,
                     "followersCount" to 128L,
                     "followingCount" to 2L,
-                    "verified" to false,
+                    "verified" to isPhoneVerified,
                     "online" to true,
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
@@ -150,12 +479,14 @@ class SocialRepository(
             } else {
                 opType = OperationType.UPDATE
                 opPath = profileDocRef.path
-                profileDocRef.update(
-                    mapOf(
-                        "online" to true,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                val updatePayload = mutableMapOf<String, Any>(
+                    "online" to true,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (isPhoneVerified && profileSnap.getBoolean("verified") != true) {
+                    updatePayload["verified"] = true
+                }
+                profileDocRef.update(updatePayload).await()
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -471,17 +802,59 @@ class SocialRepository(
         avatarData: String?
     ): Result<Unit> {
         val uid = resolveAuth()?.currentUser?.uid ?: "unauthenticated"
-        val path = "profiles/$uid"
+        var path = "profiles/$uid"
         return try {
             val currentUid = requireUserId()
-            val cleanUsername = username.trim().replace(" ", "_").take(30)
-            require(cleanUsername.length >= 2) { "Username must be at least 2 characters" }
+            val cleanUsername = sanitizeUsername(username)
+            require(cleanUsername.length >= 2) { "Username must be at least 2 valid characters" }
             val cleanFullName = fullName.trim().take(60)
             require(cleanFullName.isNotEmpty()) { "Full name cannot be empty" }
 
+            val profileSnap = db.collection("profiles").document(currentUid).get().await()
+            val oldUsernameLower = profileSnap.getString("usernameLower").orEmpty()
+            if (oldUsernameLower != cleanUsername) {
+                path = "usernames/$cleanUsername"
+                val targetUnameSnap = db.collection("usernames").document(cleanUsername).get().await()
+                if (targetUnameSnap.exists() && targetUnameSnap.getString("userId") != currentUid) {
+                    return Result.failure(IllegalStateException("Username @$cleanUsername is already taken."))
+                }
+                if (oldUsernameLower.isNotBlank()) {
+                    val oldUnameRef = db.collection("usernames").document(oldUsernameLower)
+                    val oldUnameSnap = oldUnameRef.get().await()
+                    if (oldUnameSnap.exists() && oldUnameSnap.getString("userId") == currentUid) {
+                        val phoneE164 = oldUnameSnap.getString("phoneE164").orEmpty()
+                        val salt = oldUnameSnap.getString("passwordSalt").orEmpty()
+                        val hash = oldUnameSnap.getString("passwordHash").orEmpty()
+                        val verified = oldUnameSnap.getBoolean("verified") ?: false
+                        if (phoneE164.isNotBlank() && salt.isNotBlank() && hash.isNotBlank()) {
+                            db.collection("usernames").document(cleanUsername).set(
+                                mapOf(
+                                    "userId" to currentUid,
+                                    "usernameLower" to cleanUsername,
+                                    "phoneE164" to phoneE164,
+                                    "passwordSalt" to salt,
+                                    "passwordHash" to hash,
+                                    "verified" to verified,
+                                    "createdAt" to FieldValue.serverTimestamp(),
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                            ).await()
+                            oldUnameRef.delete().await()
+                            val digits10 = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneE164)
+                            if (digits10 != null) {
+                                db.collection("phoneRegistry").document(digits10)
+                                    .update(mapOf("usernameLower" to cleanUsername))
+                                    .await()
+                            }
+                        }
+                    }
+                }
+            }
+
+            path = "profiles/$currentUid"
             val updates = mutableMapOf<String, Any>(
                 "username" to cleanUsername,
-                "usernameLower" to cleanUsername.lowercase(),
+                "usernameLower" to cleanUsername,
                 "fullName" to cleanFullName,
                 "bio" to bio.trim().take(200),
                 "website" to website.trim().take(150),

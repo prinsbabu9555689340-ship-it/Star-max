@@ -14,6 +14,7 @@
         "notifyMessages": { "type": "boolean" },
         "dailyUsageSeconds": { "type": "integer" },
         "usageDate": { "type": "string" },
+        "phoneE164": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
       },
@@ -226,6 +227,35 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["convId", "senderId", "participantUids", "text", "seenBy", "createdAt"]
+    },
+    "UsernameRecord": {
+      "title": "UsernameRecord",
+      "description": "Unique username claim and salted credential lookup record for Star Max accounts",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "usernameLower": { "type": "string" },
+        "phoneE164": { "type": "string" },
+        "passwordSalt": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "verified": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "usernameLower", "phoneE164", "passwordSalt", "passwordHash", "verified", "createdAt", "updatedAt"]
+    },
+    "PhoneRegistry": {
+      "title": "PhoneRegistry",
+      "description": "Unique 10-digit mobile number registry preventing duplicate Star Max registrations",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "phoneDigits": { "type": "string" },
+        "phoneE164": { "type": "string" },
+        "usernameLower": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "phoneDigits", "phoneE164", "usernameLower", "createdAt"]
     }
   },
   "firestore": {
@@ -236,6 +266,14 @@
     "/profiles/{profileId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "Public creator profiles"
+    },
+    "/usernames/{usernameKey}": {
+      "schema": { "$ref": "#/entities/UsernameRecord" },
+      "description": "Unique username claims and login verification records"
+    },
+    "/phoneRegistry/{phoneDigits}": {
+      "schema": { "$ref": "#/entities/PhoneRegistry" },
+      "description": "Unique phone number claims preventing duplicate accounts"
     },
     "/posts/{postId}": {
       "schema": { "$ref": "#/entities/Post" },

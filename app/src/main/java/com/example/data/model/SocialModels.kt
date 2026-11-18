@@ -39,8 +39,32 @@ data class UserSettings(
     val notifyMessages: Boolean = true,
     val dailyUsageSeconds: Long = 0L,
     val usageDate: String = "",
+    val phoneE164: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@Keep
+data class SavedAccountRecord(
+    val uid: String = "",
+    val slotName: String = "",
+    val username: String = "",
+    val fullName: String = "",
+    val avatarData: String = "",
+    val phoneE164: String = "",
+    val verified: Boolean = false,
+    val authProvider: String = "phone"
+)
+
+@Keep
+@IgnoreExtraProperties
+data class AuthLookupRecord(
+    val userId: String = "",
+    val usernameLower: String = "",
+    val phoneE164: String = "",
+    val passwordSalt: String = "",
+    val passwordHash: String = "",
+    val verified: Boolean = false
 )
 
 @Keep

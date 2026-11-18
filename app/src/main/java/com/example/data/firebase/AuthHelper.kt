@@ -9,7 +9,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
@@ -37,68 +36,16 @@ fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
     awaitClose { removeAuthStateListener(listener) }
 }
 
-fun attemptAutoSignIn(
-    context: Context,
-    credentialManager: CredentialManager?,
-    onAuthSuccess: () -> Unit,
-    onUnauthenticated: () -> Unit,
-    scope: CoroutineScope
-) {
-    val auth = runCatching { Firebase.auth }.getOrNull() ?: run {
-        onUnauthenticated()
-        return
-    }
-    if (auth.currentUser != null) {
-        onAuthSuccess()
-        return
-    }
-    if (credentialManager == null) {
-        onUnauthenticated()
-        return
-    }
-    val clientId = resolveDefaultWebClientId(context) ?: run {
-        onUnauthenticated()
-        return
-    }
-    val request = runCatching {
-        val googleIdOption = GetGoogleIdOption.Builder()
-            .setFilterByAuthorizedAccounts(true)
-            .setServerClientId(clientId)
-            .setAutoSelectEnabled(true)
-            .build()
-        GetCredentialRequest.Builder()
-            .addCredentialOption(googleIdOption)
-            .build()
-    }.getOrNull() ?: run {
-        onUnauthenticated()
-        return
-    }
-
-    scope.launch {
-        try {
-            val cred = credentialManager.getCredential(context, request).credential
-            if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
-                onAuthSuccess()
-            } else {
-                onUnauthenticated()
-            }
-        } catch (_: Throwable) {
-            onUnauthenticated()
-        }
-    }
-}
-
 fun onGoogleSignInClicked(
     context: Context,
     credentialManager: CredentialManager?,
-    onAuthSuccess: () -> Unit,
+    targetAuth: FirebaseAuth? = null,
+    onAuthSuccess: (FirebaseUser) -> Unit,
     onAuthError: (String) -> Unit,
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
-    val auth = runCatching { Firebase.auth }.getOrNull() ?: run {
+    val auth = targetAuth ?: runCatching { Firebase.auth }.getOrNull() ?: run {
         onAuthError("Firebase Authentication is not configured in this build.")
         return
     }
@@ -130,8 +77,13 @@ fun onGoogleSignInClicked(
             val cred = credentialManager.getCredential(activityContext, request).credential
             if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
-                onAuthSuccess()
+                val authResult = auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+                val signedInUser = authResult.user ?: auth.currentUser
+                if (signedInUser != null) {
+                    onAuthSuccess(signedInUser)
+                } else {
+                    onAuthError("Sign in succeeded but no user was returned.")
+                }
             } else {
                 onAuthError("Unexpected credential type returned")
             }

@@ -526,6 +526,24 @@ class StarMaxViewModel(
         }
     }
 
+    fun updateRegisteredPassword(
+        newPassword: String,
+        onResult: (Result<Unit>) -> Unit
+    ) {
+        val uname = currentUserProfile.value?.usernameLower
+            ?.ifBlank { currentUserProfile.value?.username.orEmpty() }
+            .orEmpty()
+        viewModelScope.launch {
+            val res = repository.updateRegisteredPassword(uname, newPassword)
+            res.onSuccess {
+                _actionMessage.value = "Password updated successfully"
+            }.onFailure {
+                _actionError.value = it.localizedMessage ?: "Failed to update password"
+            }
+            onResult(res)
+        }
+    }
+
     fun markNotificationRead(notifId: String) {
         if (notifId.startsWith("sample_")) {
             _localReadNotifIds.value = _localReadNotifIds.value + notifId

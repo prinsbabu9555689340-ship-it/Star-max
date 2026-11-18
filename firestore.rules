@@ -17,6 +17,22 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidUsernameKey(key) {
+      return key is string && key.size() >= 2 && key.size() <= 30 &&
+             key.matches('^[a-z0-9._\\-]+$') && !key.matches('.*\\.\\..*');
+    }
+
+    function isValidPhoneDigits(digits) {
+      return digits is string && digits.size() == 10 && digits.matches('^[0-9]{10}$');
+    }
+
+    function hasVerifiedPhoneClaim() {
+      return isSignedIn() &&
+             ('phone_number' in request.auth.token) &&
+             request.auth.token.phone_number is string &&
+             request.auth.token.phone_number.size() >= 10;
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -39,8 +55,28 @@ service cloud.firestore {
              (!('notifyMessages' in data) || data.notifyMessages is bool) &&
              (!('dailyUsageSeconds' in data) || (data.dailyUsageSeconds is int && data.dailyUsageSeconds >= 0 && data.dailyUsageSeconds <= 864000)) &&
              (!('usageDate' in data) || (data.usageDate is string && data.usageDate.size() <= 16)) &&
+             (!('phoneE164' in data) || (data.phoneE164 is string && data.phoneE164.size() <= 20)) &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidUsernameRecord(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidUsernameKey(data.usernameLower) &&
+             data.phoneE164 is string && data.phoneE164.size() >= 10 && data.phoneE164.size() <= 20 &&
+             data.passwordSalt is string && data.passwordSalt.size() >= 8 && data.passwordSalt.size() <= 64 &&
+             data.passwordHash is string && data.passwordHash.size() >= 32 && data.passwordHash.size() <= 128 &&
+             data.verified is bool &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidPhoneRegistry(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidPhoneDigits(data.phoneDigits) &&
+             data.phoneE164 is string && data.phoneE164.size() >= 10 && data.phoneE164.size() <= 20 &&
+             isValidUsernameKey(data.usernameLower) &&
+             isValidTimestamp(data.createdAt);
     }
 
     function isValidUserProfile(data) {
@@ -188,13 +224,13 @@ service cloud.firestore {
       allow create: if isOwner(userId) && isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'themeMode', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'createdAt', 'updatedAt']) &&
                        isValidUserAccount(incoming());
       allow update: if isOwner(userId) && isValidId(userId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidUserAccount(incoming()) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['themeMode', 'isPrivate', 'notifyLikes', 'notifyComments', 'notifyFollowers', 'notifyMessages', 'dailyUsageSeconds', 'usageDate', 'phoneE164', 'updatedAt']);
       allow delete: if isOwner(userId) && isValidId(userId);
 
       match /likes/{targetId} {
@@ -276,6 +312,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(profileId) &&
                        request.auth.uid == profileId &&
                        incoming().userId == request.auth.uid &&
+                       (!incoming().verified || hasVerifiedPhoneClaim()) &&
                        incoming().keys().hasAll(['userId', 'username', 'usernameLower', 'fullName', 'bio', 'website', 'visibility', 'postsCount', 'followersCount', 'followingCount', 'verified', 'online', 'createdAt', 'updatedAt']) &&
                        incoming().keys().hasOnly(['userId', 'username', 'usernameLower', 'fullName', 'bio', 'website', 'avatarData', 'avatarTint', 'visibility', 'isPrivate', 'postsCount', 'followersCount', 'followingCount', 'verified', 'online', 'createdAt', 'updatedAt']) &&
                        isValidUserProfile(incoming());
@@ -285,10 +322,53 @@ service cloud.firestore {
                        incoming().visibility == existing().visibility &&
                        incoming().createdAt == existing().createdAt &&
                        (
-                         (request.auth.uid == profileId && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'usernameLower', 'fullName', 'bio', 'website', 'avatarData', 'avatarTint', 'isPrivate', 'postsCount', 'followingCount', 'online', 'updatedAt'])) ||
+                         (request.auth.uid == profileId &&
+                          (incoming().verified == existing().verified || (incoming().verified && hasVerifiedPhoneClaim())) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['username', 'usernameLower', 'fullName', 'bio', 'website', 'avatarData', 'avatarTint', 'isPrivate', 'postsCount', 'followingCount', 'verified', 'online', 'updatedAt'])) ||
                          (incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'updatedAt']))
                        );
       allow delete: if isOwner(profileId) && isValidId(profileId);
+    }
+
+    match /usernames/{usernameKey} {
+      allow get: if isValidUsernameKey(usernameKey);
+      allow list: if false;
+      allow create: if isSignedIn() && isValidUsernameKey(usernameKey) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().usernameLower == usernameKey &&
+                       (!incoming().verified || hasVerifiedPhoneClaim()) &&
+                       incoming().keys().hasAll(['userId', 'usernameLower', 'phoneE164', 'passwordSalt', 'passwordHash', 'verified', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'usernameLower', 'phoneE164', 'passwordSalt', 'passwordHash', 'verified', 'createdAt', 'updatedAt']) &&
+                       isValidUsernameRecord(incoming());
+      allow update: if isSignedIn() && isValidUsernameKey(usernameKey) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().usernameLower == existing().usernameLower &&
+                       incoming().createdAt == existing().createdAt &&
+                       (!incoming().verified || existing().verified || hasVerifiedPhoneClaim()) &&
+                       isValidUsernameRecord(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['phoneE164', 'passwordSalt', 'passwordHash', 'verified', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidUsernameKey(usernameKey) && existing().userId == request.auth.uid;
+    }
+
+    match /phoneRegistry/{phoneDigits} {
+      allow get: if isValidPhoneDigits(phoneDigits);
+      allow list: if false;
+      allow create: if isSignedIn() && isValidPhoneDigits(phoneDigits) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().phoneDigits == phoneDigits &&
+                       incoming().keys().hasAll(['userId', 'phoneDigits', 'phoneE164', 'usernameLower', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'phoneDigits', 'phoneE164', 'usernameLower', 'createdAt']) &&
+                       isValidPhoneRegistry(incoming());
+      allow update: if isSignedIn() && isValidPhoneDigits(phoneDigits) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().phoneDigits == existing().phoneDigits &&
+                       incoming().phoneE164 == existing().phoneE164 &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidPhoneRegistry(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['usernameLower']);
+      allow delete: if isSignedIn() && isValidPhoneDigits(phoneDigits) && existing().userId == request.auth.uid;
     }
 
     match /posts/{postId} {

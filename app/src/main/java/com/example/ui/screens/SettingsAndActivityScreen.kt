@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
@@ -45,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -68,11 +70,15 @@ import com.example.data.model.ThemeMode
 import com.example.data.model.UserProfile
 import com.example.data.model.UserSettings
 import com.example.ui.theme.LocalStarMaxColors
+import com.google.firebase.auth.FirebaseAuth
 
 @Composable
 fun SettingsAndActivityScreen(
     currentUserId: String,
     userEmail: String,
+    userPhone: String = "",
+    savedAccountsCount: Int = 1,
+    activeAuth: FirebaseAuth? = null,
     profile: UserProfile,
     userSettings: UserSettings,
     themeMode: ThemeMode,
@@ -90,6 +96,7 @@ fun SettingsAndActivityScreen(
     onSetAccountPrivacy: (Boolean) -> Unit,
     onUpdateNotificationPrefs: (likes: Boolean, comments: Boolean, followers: Boolean, messages: Boolean) -> Unit,
     onSaveProfileEdits: (username: String, fullName: String, bio: String, website: String, avatarData: String?) -> Unit,
+    onUpdateAppPassword: ((newPassword: String, onResult: (Result<Unit>) -> Unit) -> Unit)? = null,
     onLikeToggle: (Post) -> Unit,
     onDoubleTapLike: (Post) -> Unit,
     onOpenComments: (Post) -> Unit,
@@ -99,7 +106,8 @@ fun SettingsAndActivityScreen(
     onApproveFollowRequest: (FollowRequest) -> Unit,
     onDeclineFollowRequest: (String) -> Unit,
     onShowMessage: (String) -> Unit,
-    onSignOut: () -> Unit
+    onSignOut: () -> Unit,
+    onSignOutAll: () -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
 
@@ -117,6 +125,7 @@ fun SettingsAndActivityScreen(
     var showFollowRequests by remember { mutableStateOf(false) }
     var showChangePassword by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showLogoutAllConfirm by remember { mutableStateOf(false) }
 
     val likedPosts = remember(posts, likedIds) { posts.filter { it.id in likedIds } }
     val savedPosts = remember(posts, savedIds) { posts.filter { it.id in savedIds } }
@@ -499,10 +508,15 @@ fun SettingsAndActivityScreen(
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    val securitySubtitle = when {
+                        userPhone.isNotBlank() -> "Verified mobile: $userPhone"
+                        userEmail.isNotBlank() -> "Manage password for $userEmail"
+                        else -> "Password & account security"
+                    }
                     SettingsActionRow(
                         icon = Icons.Filled.Key,
                         title = "Change Password",
-                        subtitle = if (userEmail.isNotBlank()) "Manage password for $userEmail" else "Password & account security",
+                        subtitle = securitySubtitle,
                         testTag = "settings_change_password_row",
                         onClick = { showChangePassword = true }
                     )
@@ -529,7 +543,30 @@ fun SettingsAndActivityScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Log Out", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = if (profile.username.isNotBlank()) "Log Out @${profile.username}" else "Log Out",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = { showLogoutAllConfirm = true },
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("settings_logout_all_button")
+                ) {
+                    Text(
+                        text = if (savedAccountsCount > 1) {
+                            "Log out of all accounts ($savedAccountsCount)"
+                        } else {
+                            "Log out of all accounts"
+                        },
+                        style = MaterialTheme.typography.titleSmall
+                    )
                 }
                 Spacer(modifier = Modifier.height(24.dp))
             }
@@ -593,6 +630,9 @@ fun SettingsAndActivityScreen(
     if (showChangePassword) {
         ChangePasswordSheet(
             userEmail = userEmail,
+            userPhone = userPhone,
+            activeAuth = activeAuth,
+            onUpdateAppPassword = onUpdateAppPassword,
             onShowMessage = onShowMessage,
             onDismiss = { showChangePassword = false }
         )
@@ -601,8 +641,14 @@ fun SettingsAndActivityScreen(
     if (showLogoutConfirm) {
         AlertDialog(
             onDismissRequest = { showLogoutConfirm = false },
-            title = { Text("Log out of Star Max?") },
-            text = { Text("All of your preferences and activity are saved to your account.") },
+            title = {
+                Text(
+                    if (profile.username.isNotBlank()) "Log out of @${profile.username}?" else "Log out of Star Max?"
+                )
+            },
+            text = {
+                Text("Your session on this account will be cleared and you will return to the login screen.")
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -616,6 +662,32 @@ fun SettingsAndActivityScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showLogoutAllConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutAllConfirm = false },
+            title = { Text("Log out of all accounts?") },
+            text = {
+                Text("All saved Star Max accounts on this device will be signed out and removed from the account switcher.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutAllConfirm = false
+                        onSignOutAll()
+                    },
+                    modifier = Modifier.testTag("confirm_logout_all_button")
+                ) {
+                    Text("Log Out All", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutAllConfirm = false }) {
                     Text("Cancel")
                 }
             }

@@ -79,6 +79,7 @@ import com.example.ui.components.formatRelativeTime
 import com.example.ui.theme.LocalStarMaxColors
 import com.google.firebase.Firebase
 import com.google.firebase.auth.EmailAuthProvider
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 
 @Composable
@@ -518,15 +519,20 @@ fun FollowRequestsDialog(
 @Composable
 fun ChangePasswordSheet(
     userEmail: String,
+    userPhone: String = "",
+    activeAuth: FirebaseAuth? = null,
+    onUpdateAppPassword: ((newPassword: String, onResult: (Result<Unit>) -> Unit) -> Unit)? = null,
     onShowMessage: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val currentUser = remember { runCatching { Firebase.auth.currentUser }.getOrNull() }
-    val hasPasswordProvider = remember(currentUser) {
+    val resolvedAuth = remember(activeAuth) { activeAuth ?: runCatching { Firebase.auth }.getOrNull() }
+    val currentUser = remember(resolvedAuth) { runCatching { resolvedAuth?.currentUser }.getOrNull() }
+    val hasEmailPasswordProvider = remember(currentUser) {
         currentUser?.providerData?.any { it.providerId == EmailAuthProvider.PROVIDER_ID } == true
     }
+    val hasPhonePasswordMode = userPhone.isNotBlank() && onUpdateAppPassword != null
 
     var currentPassword by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
@@ -548,7 +554,63 @@ fun ChangePasswordSheet(
         ) {
             Text("Password & Account Security", style = MaterialTheme.typography.titleLarge)
 
-            if (hasPasswordProvider) {
+            if (hasPhonePasswordMode) {
+                Text(
+                    text = "Update the Star Max login password for $userPhone",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it },
+                    label = { Text("New password (min 6 characters)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = confirmPassword,
+                    onValueChange = { confirmPassword = it },
+                    label = { Text("Confirm new password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                statusText?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+                Button(
+                    onClick = {
+                        if (newPassword.length < 6) {
+                            statusText = "Password must be at least 6 characters."
+                            return@Button
+                        }
+                        if (newPassword != confirmPassword) {
+                            statusText = "New passwords do not match."
+                            return@Button
+                        }
+                        isBusy = true
+                        onUpdateAppPassword?.invoke(newPassword) { res ->
+                            isBusy = false
+                            res.onSuccess {
+                                onShowMessage("Password updated successfully")
+                                onDismiss()
+                            }.onFailure { err ->
+                                statusText = err.localizedMessage ?: "Failed to update password."
+                            }
+                        }
+                    },
+                    enabled = !isBusy && newPassword.isNotBlank() && confirmPassword.isNotBlank(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("confirm_change_password_button")
+                ) {
+                    Text(if (isBusy) "Updating..." else "Update Password")
+                }
+            } else if (hasEmailPasswordProvider) {
                 Text(
                     text = "Update the password for $userEmail",
                     style = MaterialTheme.typography.bodyMedium,

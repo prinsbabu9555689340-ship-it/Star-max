@@ -55,10 +55,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.R
+import com.example.data.firebase.AccountSessionManager
 import com.example.data.firebase.SocialRepository
 import com.example.data.firebase.ThemePreferences
 import com.example.data.firebase.authStateFlow
-import com.example.data.firebase.signOut
+import com.example.data.model.SavedAccountRecord
 import com.example.data.model.Story
 import com.example.data.model.ThemeMode
 import com.example.data.model.UiState
@@ -77,11 +78,8 @@ import com.example.ui.screens.ReelsScreen
 import com.example.ui.screens.SettingsAndActivityScreen
 import com.example.ui.screens.StoryViewerDialog
 import com.example.ui.theme.StarMaxTheme
-import com.google.firebase.Firebase
-import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
@@ -110,35 +108,13 @@ private sealed interface OverlayRoute {
     data class UserDetail(val userId: String) : OverlayRoute
 }
 
-private data class ResolvedFirebaseServices(
-    val auth: FirebaseAuth,
-    val db: FirebaseFirestore
-)
-
-private fun resolveFirebaseServices(
-    context: android.content.Context,
-    authOverride: FirebaseAuth?
-): ResolvedFirebaseServices? {
-    return try {
-        val appContext = context.applicationContext ?: context
-        val hasFirebaseApp = FirebaseApp.getApps(appContext).isNotEmpty() ||
-            runCatching { FirebaseApp.initializeApp(appContext) != null }.getOrDefault(false)
-        if (!hasFirebaseApp && authOverride == null) {
-            return null
-        }
-        val auth = authOverride ?: Firebase.auth
-        val databaseId = appContext.getString(R.string.firestore_database_id)
-        if (databaseId.isBlank()) return null
-        val db = FirebaseFirestore.getInstance(databaseId)
-        ResolvedFirebaseServices(auth = auth, db = db)
-    } catch (_: Throwable) {
-        null
-    }
-}
-
 @Composable
 fun AppNavigation(authOverride: FirebaseAuth? = null) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val credentialManager = remember(context) {
+        runCatching { CredentialManager.create(context) }.getOrNull()
+    }
     val themePreferences = remember(context) {
         runCatching { ThemePreferences(context.applicationContext ?: context) }.getOrNull()
     }
@@ -148,46 +124,113 @@ fun AppNavigation(authOverride: FirebaseAuth? = null) {
     val persistedTheme by persistedThemeFlow.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
     var fallbackThemeMode by remember { mutableStateOf(ThemeMode.SYSTEM) }
 
-    val firebaseServices = remember(context, authOverride) {
-        resolveFirebaseServices(context, authOverride)
+    val sessionManager = remember(context) {
+        AccountSessionManager(context.applicationContext ?: context)
     }
-    var demoModeActive by remember(firebaseServices) {
-        mutableStateOf(firebaseServices == null)
+    val isFirebaseReady = remember(sessionManager, authOverride) {
+        authOverride != null || sessionManager.isFirebaseConfigured()
     }
+    val savedAccounts by sessionManager.savedAccounts.collectAsStateWithLifecycle()
+    val activeUid by sessionManager.activeUid.collectAsStateWithLifecycle()
+
+    var demoModeActive by remember(isFirebaseReady) {
+        mutableStateOf(!isFirebaseReady)
+    }
+    var showAddAccountScreen by remember { mutableStateOf(false) }
 
     val activeTheme = if (themePreferences != null) persistedTheme else fallbackThemeMode
 
     StarMaxTheme(themeMode = activeTheme) {
-        if (firebaseServices == null || demoModeActive) {
+        if (!isFirebaseReady || demoModeActive) {
             LocalDemoShell(
                 themePreferences = themePreferences,
                 currentThemeMode = activeTheme,
-                canReturnToSignIn = firebaseServices != null,
+                canReturnToSignIn = isFirebaseReady,
                 onThemeModeSelected = { fallbackThemeMode = it },
                 onExitDemo = { demoModeActive = false }
             )
-        } else {
-            val userFlow = remember(firebaseServices.auth) {
-                firebaseServices.auth.authStateFlow().catch { emit(null) }
-            }
-            val currentUser by userFlow.collectAsStateWithLifecycle(
-                initialValue = runCatching { firebaseServices.auth.currentUser }.getOrNull()
+        } else if (showAddAccountScreen) {
+            AuthScreen(
+                accountSessionManager = sessionManager,
+                isAddAccountMode = true,
+                onAccountAuthenticated = { record ->
+                    showAddAccountScreen = false
+                    sessionManager.saveAccount(record, makeActive = true)
+                },
+                onCancelAddAccount = {
+                    showAddAccountScreen = false
+                }
             )
-            val user = currentUser
-            if (user == null) {
+        } else {
+            val activeRecord = remember(activeUid, savedAccounts) {
+                activeUid?.let { uid -> savedAccounts.firstOrNull { it.uid == uid } }
+            }
+            val slotAuth = remember(activeRecord, authOverride) {
+                authOverride ?: activeRecord?.let { sessionManager.resolveAuth(it.slotName) }
+            }
+            val slotDb = remember(activeRecord) {
+                activeRecord?.let { sessionManager.resolveFirestore(it.slotName) }
+            }
+
+            if (activeRecord == null || slotAuth == null || slotDb == null) {
                 AuthScreen(
-                    onAuthSuccess = {},
+                    accountSessionManager = sessionManager,
+                    isAddAccountMode = false,
+                    onAccountAuthenticated = { record ->
+                        sessionManager.saveAccount(record, makeActive = true)
+                    },
                     onEnterDemoMode = { demoModeActive = true }
                 )
             } else {
-                key(user.uid) {
-                    StarMaxAuthenticatedShell(
-                        currentUserId = user.uid,
-                        firebaseUser = user,
-                        db = firebaseServices.db,
-                        auth = firebaseServices.auth,
-                        themePreferences = themePreferences ?: ThemePreferences(context.applicationContext ?: context)
+                val userFlow = remember(slotAuth) {
+                    slotAuth.authStateFlow().catch { emit(null) }
+                }
+                val currentUser by userFlow.collectAsStateWithLifecycle(
+                    initialValue = runCatching { slotAuth.currentUser }.getOrNull()
+                )
+                val user = currentUser
+                if (user == null || user.uid != activeRecord.uid) {
+                    AuthScreen(
+                        accountSessionManager = sessionManager,
+                        isAddAccountMode = false,
+                        onAccountAuthenticated = { record ->
+                            sessionManager.saveAccount(record, makeActive = true)
+                        },
+                        onEnterDemoMode = { demoModeActive = true }
                     )
+                } else {
+                    key(user.uid) {
+                        StarMaxAuthenticatedShell(
+                            currentUserId = user.uid,
+                            firebaseUser = user,
+                            db = slotDb,
+                            auth = slotAuth,
+                            sessionManager = sessionManager,
+                            savedAccounts = savedAccounts,
+                            themePreferences = themePreferences ?: ThemePreferences(context.applicationContext ?: context),
+                            onSwitchAccount = { targetRecord ->
+                                val switched = sessionManager.switchToSavedAccount(targetRecord.uid)
+                                if (!switched) {
+                                    showAddAccountScreen = true
+                                }
+                            },
+                            onAddAccount = {
+                                showAddAccountScreen = true
+                            },
+                            onSignOut = {
+                                sessionManager.logoutActiveAccount(
+                                    credentialManager = credentialManager,
+                                    scope = scope
+                                )
+                            },
+                            onSignOutAll = {
+                                sessionManager.logoutAllAccounts(
+                                    credentialManager = credentialManager,
+                                    scope = scope
+                                )
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -200,13 +243,15 @@ private fun StarMaxAuthenticatedShell(
     firebaseUser: FirebaseUser,
     db: FirebaseFirestore,
     auth: FirebaseAuth,
-    themePreferences: ThemePreferences
+    sessionManager: AccountSessionManager,
+    savedAccounts: List<SavedAccountRecord>,
+    themePreferences: ThemePreferences,
+    onSwitchAccount: (SavedAccountRecord) -> Unit,
+    onAddAccount: () -> Unit,
+    onSignOut: () -> Unit,
+    onSignOutAll: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) {
-        runCatching { CredentialManager.create(context) }.getOrNull()
-    }
 
     val viewModel: StarMaxViewModel = viewModel(
         key = currentUserId,
@@ -282,6 +327,19 @@ private fun StarMaxAuthenticatedShell(
             snackbarHostState.showSnackbar(msg)
             viewModel.clearFeedback()
             localToastMessage = null
+        }
+    }
+
+    LaunchedEffect(currentUserProfile) {
+        val p = currentUserProfile
+        if (p != null && p.userId == currentUserId) {
+            sessionManager.updateAccountProfile(
+                uid = currentUserId,
+                username = p.username,
+                fullName = p.fullName,
+                avatarData = p.avatarData,
+                verified = p.verified
+            )
         }
     }
 
@@ -452,6 +510,9 @@ private fun StarMaxAuthenticatedShell(
                             SettingsAndActivityScreen(
                                 currentUserId = currentUserId,
                                 userEmail = firebaseUser.email.orEmpty(),
+                                userPhone = firebaseUser.phoneNumber.orEmpty().ifBlank { userSettings.phoneE164 },
+                                savedAccountsCount = savedAccounts.size.coerceAtLeast(1),
+                                activeAuth = auth,
                                 profile = myProfile,
                                 userSettings = userSettings,
                                 themeMode = themeMode,
@@ -473,6 +534,9 @@ private fun StarMaxAuthenticatedShell(
                                 onSaveProfileEdits = { u, f, b, w, a ->
                                     viewModel.updateProfile(u, f, b, w, a) {}
                                 },
+                                onUpdateAppPassword = { newPwd, onResult ->
+                                    viewModel.updateRegisteredPassword(newPwd, onResult)
+                                },
                                 onLikeToggle = { viewModel.toggleLikePost(it) },
                                 onDoubleTapLike = { viewModel.likePostIfNotLiked(it) },
                                 onOpenComments = { post ->
@@ -490,10 +554,11 @@ private fun StarMaxAuthenticatedShell(
                                 onShowMessage = { localToastMessage = it },
                                 onSignOut = {
                                     viewModel.flushDailyUsage()
-                                    signOut(
-                                        credentialManager = credentialManager,
-                                        scope = scope
-                                    )
+                                    onSignOut()
+                                },
+                                onSignOutAll = {
+                                    viewModel.flushDailyUsage()
+                                    onSignOutAll()
                                 }
                             )
                         }
@@ -688,7 +753,10 @@ private fun StarMaxAuthenticatedShell(
                                         },
                                         onSaveToggle = { viewModel.toggleSavePost(it) },
                                         onArchiveToggle = { viewModel.toggleArchivePost(it) },
-                                        onOpenSettingsAndActivity = { overlay = OverlayRoute.SettingsAndActivity }
+                                        onOpenSettingsAndActivity = { overlay = OverlayRoute.SettingsAndActivity },
+                                        savedAccounts = savedAccounts,
+                                        onSwitchAccount = onSwitchAccount,
+                                        onAddAccount = onAddAccount
                                     )
                                 }
                             }
