@@ -84,6 +84,8 @@ import com.example.data.model.SavedAccountRecord
 import com.example.ui.components.StarMaxWordmark
 import com.example.ui.theme.LocalStarMaxColors
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.auth.PhoneAuthCredential
 import com.google.firebase.auth.PhoneAuthProvider
 import kotlinx.coroutines.delay
