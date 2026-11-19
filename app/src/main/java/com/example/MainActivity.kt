@@ -16,10 +16,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.ui.AppNavigation
 import com.example.ui.theme.StarMaxTheme
+import com.google.firebase.FirebaseApp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        runCatching { FirebaseApp.initializeApp(this) }
+            .onFailure { Log.w("MainActivity", "FirebaseApp.initializeApp skipped", it) }
         runCatching { enableEdgeToEdge() }
             .onFailure { Log.w("MainActivity", "enableEdgeToEdge skipped", it) }
 

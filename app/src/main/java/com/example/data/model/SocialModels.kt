@@ -203,6 +203,30 @@ data class Story(
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
+enum class StoryReactionType(val wireValue: String, val label: String) {
+    HEART("heart", "Heart"),
+    FIRE("fire", "Fire"),
+    CLAP("clap", "Clap");
+
+    companion object {
+        fun fromWire(value: String?): StoryReactionType? =
+            entries.firstOrNull { it.wireValue.equals(value?.trim(), ignoreCase = true) }
+    }
+}
+
+@Keep
+@IgnoreExtraProperties
+data class StoryReaction(
+    @DocumentId val id: String = "",
+    val storyId: String = "",
+    val storyOwnerId: String = "",
+    val userId: String = "",
+    val username: String = "",
+    val reactionType: String = StoryReactionType.HEART.wireValue,
+    val visibility: String = "public",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
 @Keep
 @IgnoreExtraProperties
 data class Reel(

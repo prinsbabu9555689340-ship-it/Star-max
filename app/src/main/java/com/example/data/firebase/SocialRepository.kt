@@ -13,10 +13,13 @@ import com.example.data.model.Post
 import com.example.data.model.Reel
 import com.example.data.model.Story
 import com.example.data.model.StoryFilter
+import com.example.data.model.StoryReaction
+import com.example.data.model.StoryReactionType
 import com.example.data.model.ThemeMode
 import com.example.data.model.UserProfile
 import com.example.data.model.UserSettings
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -35,18 +38,25 @@ import kotlinx.coroutines.tasks.await
 
 private const val TAG = "SocialRepository"
 
+private fun initDefaultFirestore(context: Context): FirebaseFirestore {
+    val appCtx = context.applicationContext ?: context
+    if (FirebaseApp.getApps(appCtx).isEmpty()) {
+        runCatching { FirebaseApp.initializeApp(appCtx) }
+    }
+    return FirebaseFirestore.getInstance(appCtx.getString(R.string.firestore_database_id))
+}
+
 class SocialRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth? = null
 ) {
     constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        ),
-        null
+        db = initDefaultFirestore(context),
+        auth = FirebaseAuth.getInstance()
     )
 
-    private fun resolveAuth(): FirebaseAuth? = auth ?: runCatching { Firebase.auth }.getOrNull()
+    private fun resolveAuth(): FirebaseAuth? =
+        auth ?: runCatching { FirebaseAuth.getInstance() }.getOrElse { runCatching { Firebase.auth }.getOrNull() }
 
     private fun requireUserId(): String {
         return resolveAuth()?.currentUser?.uid
@@ -610,6 +620,19 @@ class SocialRepository(
                     .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             }
             .handleStreamErrors(OperationType.LIST, "stories", uid)
+
+    fun observeStoryReactions(storyId: String, uid: String): Flow<List<StoryReaction>> =
+        db.collection("story_reactions")
+            .whereEqualTo("visibility", "public")
+            .whereEqualTo("storyId", storyId)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(
+                    StoryReaction::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            }
+            .handleStreamErrors(OperationType.LIST, "story_reactions", uid)
 
     fun observeReels(uid: String): Flow<List<Reel>> =
         db.collection("reels")
@@ -1495,6 +1518,55 @@ class SocialRepository(
                     actor = actor,
                     targetId = postId,
                     previewText = "commented: \"${trimmed.take(80)}\""
+                )
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun addStoryReaction(
+        story: Story,
+        reactionType: StoryReactionType,
+        actor: UserProfile
+    ): Result<Unit> {
+        var path = "story_reactions"
+        return try {
+            val uid = requireUserId()
+            val cleanStoryId = story.id.trim().take(128)
+            require(cleanStoryId.isNotEmpty()) { "Story ID is required to react." }
+
+            val ownerId = story.userId.trim().ifBlank { uid }.take(128)
+            val cleanUsername = sanitizeUsername(actor.username)
+                .ifBlank { "star_user" }
+                .let { if (it.length < 2) "star_user" else it }
+                .take(30)
+
+            val docRef = db.collection("story_reactions").document()
+            path = docRef.path
+            docRef.set(
+                mapOf(
+                    "storyId" to cleanStoryId,
+                    "storyOwnerId" to ownerId,
+                    "userId" to uid,
+                    "username" to cleanUsername,
+                    "reactionType" to reactionType.wireValue,
+                    "visibility" to "public",
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+
+            if (story.userId.isNotBlank() && story.userId != uid && !story.userId.startsWith("sample_")) {
+                sendNotification(
+                    recipientId = story.userId,
+                    notifType = "like",
+                    actor = actor,
+                    targetId = cleanStoryId,
+                    previewText = "reacted to your story (${reactionType.label})"
                 )
             }
             Result.success(Unit)

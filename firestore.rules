@@ -179,6 +179,16 @@ service cloud.firestore {
              isValidTimestamp(data.createdAt);
     }
 
+    function isValidStoryReaction(data) {
+      return data.storyId is string && data.storyId.size() >= 1 && data.storyId.size() <= 128 &&
+             data.storyOwnerId is string && data.storyOwnerId.size() >= 1 && data.storyOwnerId.size() <= 128 &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 30 &&
+             data.reactionType in ['heart', 'fire', 'clap'] &&
+             data.visibility == 'public' &&
+             isValidTimestamp(data.createdAt);
+    }
+
     function isValidReel(data) {
       return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
              data.authorUsername is string && data.authorUsername.size() >= 2 && data.authorUsername.size() <= 30 &&
@@ -487,6 +497,18 @@ service cloud.firestore {
                        incoming().keys().hasOnly(['userId', 'authorUsername', 'authorAvatar', 'mediaType', 'mediaData', 'textContent', 'bgGradient', 'filterName', 'songTitle', 'songArtist', 'songUrl', 'visibility', 'expiresAtMillis', 'createdAt']) &&
                        isValidStory(incoming());
       allow delete: if isSignedIn() && isValidId(storyId) && resource.data.userId == request.auth.uid;
+    }
+
+    match /story_reactions/{reactionId} {
+      allow get: if isSignedIn() && isValidId(reactionId) && (resource == null || resource.data.visibility == 'public');
+      allow list: if isSignedIn() && resource.data.visibility == 'public';
+      allow create: if isSignedIn() && isValidId(reactionId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['storyId', 'storyOwnerId', 'userId', 'username', 'reactionType', 'visibility', 'createdAt']) &&
+                       incoming().keys().hasOnly(['storyId', 'storyOwnerId', 'userId', 'username', 'reactionType', 'visibility', 'createdAt']) &&
+                       isValidStoryReaction(incoming());
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(reactionId) && resource.data.userId == request.auth.uid;
     }
 
     match /reels/{reelId} {

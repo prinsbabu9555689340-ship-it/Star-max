@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
@@ -108,7 +110,7 @@ fun AuthScreen(
     }
 
     val context = LocalContext.current
-    val activity = context as? Activity
+    val activity = remember(context) { context.findActivity() }
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) {
         runCatching { CredentialManager.create(context) }.getOrNull()
@@ -121,7 +123,7 @@ fun AuthScreen(
     val slotAuth = remember(slotName) { accountSessionManager.resolveAuth(slotName) }
     val slotDb = remember(slotName) { accountSessionManager.resolveFirestore(slotName) }
     val slotRepository = remember(slotDb, slotAuth) {
-        slotDb?.let { SocialRepository(db = it, auth = slotAuth) }
+        SocialRepository(db = slotDb, auth = slotAuth)
     }
 
     var selectedTab by remember { mutableStateOf(if (isAddAccountMode) AuthTab.SIGN_UP else AuthTab.LOG_IN) }
@@ -169,16 +171,8 @@ fun AuthScreen(
     }
 
     suspend fun finalizePhoneCredential(credential: PhoneAuthCredential) {
-        val auth = slotAuth ?: run {
-            isBusy = false
-            errorMessage = "Firebase Authentication is unavailable."
-            return
-        }
-        val repo = slotRepository ?: run {
-            isBusy = false
-            errorMessage = "Database connection is unavailable."
-            return
-        }
+        val auth = slotAuth
+        val repo = slotRepository
 
         val signInRes = PhoneAuthHelper.signInWithPhoneCredential(auth, credential)
         val user = signInRes.getOrElse { err ->
@@ -272,10 +266,9 @@ fun AuthScreen(
         useResendToken: PhoneAuthProvider.ForceResendingToken? = null
     ) {
         val currentActivity = activity
-        val auth = slotAuth
-        if (currentActivity == null || auth == null) {
+        if (currentActivity == null) {
             isBusy = false
-            errorMessage = "Firebase Phone Authentication is unavailable. Check your connection and configuration."
+            errorMessage = "Please reopen this screen to complete SMS verification."
             return
         }
 
@@ -287,7 +280,7 @@ fun AuthScreen(
 
         PhoneAuthHelper.sendVerificationOtp(
             activity = currentActivity,
-            auth = auth,
+            auth = slotAuth,
             phoneE164 = targetPhoneE164,
             resendToken = useResendToken,
             onAutoVerified = { credential ->
@@ -525,41 +518,36 @@ fun AuthScreen(
                                             signUpPassword.length < 6 -> errorMessage = "Password must be at least 6 characters."
                                             digits == null -> errorMessage = "Enter a valid 10-digit +91 mobile number."
                                             else -> {
-                                                val repo = slotRepository
-                                                if (repo == null) {
-                                                    errorMessage = "Firebase connection is unavailable. Please try again later."
-                                                } else {
-                                                    isBusy = true
-                                                    scope.launch {
-                                                        val unameRes = repo.checkUsernameAvailable(cleanUser)
-                                                        if (unameRes.isFailure) {
-                                                            isBusy = false
-                                                            errorMessage = unameRes.exceptionOrNull()?.localizedMessage
-                                                                ?: "Could not verify username availability."
-                                                            return@launch
-                                                        }
-                                                        if (unameRes.getOrNull() == false) {
-                                                            isBusy = false
-                                                            errorMessage = "Username @$cleanUser is already taken."
-                                                            return@launch
-                                                        }
-                                                        val phoneRes = repo.checkPhoneAvailable(digits)
-                                                        if (phoneRes.isFailure) {
-                                                            isBusy = false
-                                                            errorMessage = phoneRes.exceptionOrNull()?.localizedMessage
-                                                                ?: "Could not verify mobile number."
-                                                            return@launch
-                                                        }
-                                                        if (phoneRes.getOrNull() == false) {
-                                                            isBusy = false
-                                                            errorMessage = "This mobile number is already registered. Please log in."
-                                                            return@launch
-                                                        }
-                                                        triggerOtpSend(
-                                                            targetPhoneE164 = PhoneFormatUtils.toIndianE164(digits),
-                                                            isSignUp = true
-                                                        )
+                                                isBusy = true
+                                                scope.launch {
+                                                    val unameRes = slotRepository.checkUsernameAvailable(cleanUser)
+                                                    if (unameRes.isFailure) {
+                                                        isBusy = false
+                                                        errorMessage = unameRes.exceptionOrNull()?.localizedMessage
+                                                            ?: "Could not verify username availability."
+                                                        return@launch
                                                     }
+                                                    if (unameRes.getOrNull() == false) {
+                                                        isBusy = false
+                                                        errorMessage = "Username @$cleanUser is already taken."
+                                                        return@launch
+                                                    }
+                                                    val phoneRes = slotRepository.checkPhoneAvailable(digits)
+                                                    if (phoneRes.isFailure) {
+                                                        isBusy = false
+                                                        errorMessage = phoneRes.exceptionOrNull()?.localizedMessage
+                                                            ?: "Could not verify mobile number."
+                                                        return@launch
+                                                    }
+                                                    if (phoneRes.getOrNull() == false) {
+                                                        isBusy = false
+                                                        errorMessage = "This mobile number is already registered. Please log in."
+                                                        return@launch
+                                                    }
+                                                    triggerOtpSend(
+                                                        targetPhoneE164 = PhoneFormatUtils.toIndianE164(digits),
+                                                        isSignUp = true
+                                                    )
                                                 }
                                             }
                                         }
@@ -616,15 +604,9 @@ fun AuthScreen(
                                             return@GradientPrimaryButton
                                         }
 
-                                        val repo = slotRepository
-                                        if (repo == null) {
-                                            errorMessage = "Firebase connection is unavailable. Check internet connectivity."
-                                            return@GradientPrimaryButton
-                                        }
-
                                         isBusy = true
                                         scope.launch {
-                                            val lookupRes = repo.lookupAccountForLogin(loginIdentifier)
+                                            val lookupRes = slotRepository.lookupAccountForLogin(loginIdentifier)
                                             if (lookupRes.isFailure) {
                                                 isBusy = false
                                                 errorMessage = lookupRes.exceptionOrNull()?.localizedMessage
@@ -759,7 +741,7 @@ fun AuthScreen(
                             targetAuth = slotAuth,
                             onAuthSuccess = { user: FirebaseUser ->
                                 scope.launch {
-                                    slotRepository?.ensureUserProfile(user)
+                                    slotRepository.ensureUserProfile(user)
                                     isBusy = false
                                     val handle = user.displayName
                                         ?.lowercase()
@@ -873,4 +855,10 @@ private fun GradientPrimaryButton(
             )
         }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

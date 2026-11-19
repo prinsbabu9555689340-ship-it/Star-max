@@ -14,6 +14,8 @@ import com.example.data.model.Post
 import com.example.data.model.Reel
 import com.example.data.model.Story
 import com.example.data.model.StoryFilter
+import com.example.data.model.StoryReaction
+import com.example.data.model.StoryReactionType
 import com.example.data.model.ThemeMode
 import com.example.data.model.UiState
 import com.example.data.model.UserProfile
@@ -51,6 +53,7 @@ class StarMaxViewModel(
 
     private val _activeCommentTarget = MutableStateFlow<Pair<String, Boolean>?>(null) // id to isReel
     private val _activeChatConvId = MutableStateFlow<String?>(null)
+    private val _activeStoryId = MutableStateFlow<String?>(null)
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
     private val _localReadNotifIds = MutableStateFlow<Set<String>>(emptySet())
@@ -270,6 +273,13 @@ class StarMaxViewModel(
         }
         .toUiState("messages")
 
+    val storyReactionsState: StateFlow<UiState<List<StoryReaction>>> = _activeStoryId
+        .flatMapLatest { storyId ->
+            if (storyId.isNullOrBlank()) flowOf(emptyList())
+            else repository.observeStoryReactions(storyId, currentUserId)
+        }
+        .toUiState("story reactions")
+
     fun setThemeMode(mode: ThemeMode) {
         syncedThemeFromDb = true
         viewModelScope.launch {
@@ -416,6 +426,28 @@ class StarMaxViewModel(
 
     fun closeConversation() {
         _activeChatConvId.value = null
+    }
+
+    fun openStory(storyId: String) {
+        _activeStoryId.value = storyId.takeIf { it.isNotBlank() }
+    }
+
+    fun closeStory() {
+        _activeStoryId.value = null
+    }
+
+    fun reactToStory(story: Story, reactionType: StoryReactionType) {
+        val actor = currentUserProfile.value ?: UserProfile(
+            userId = currentUserId,
+            username = "star_user",
+            fullName = "Star Creator"
+        )
+        viewModelScope.launch {
+            repository.addStoryReaction(story = story, reactionType = reactionType, actor = actor)
+                .onFailure {
+                    _actionError.value = it.localizedMessage ?: "Failed to send story reaction"
+                }
+        }
     }
 
     fun toggleLikePost(post: Post) {

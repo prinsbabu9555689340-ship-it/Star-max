@@ -10,6 +10,8 @@ import com.example.data.firebase.handleFirestoreError
 import com.example.data.model.SavedAccountRecord
 import com.example.data.model.StoryFilter
 import com.example.data.model.StoryMusicCatalog
+import com.example.data.model.StoryReaction
+import com.example.data.model.StoryReactionType
 import com.example.data.model.UserProfile
 import com.example.data.model.UserSettings
 import com.example.data.model.VerificationRequest
@@ -198,5 +200,25 @@ class ExampleRobolectricTest {
       assertTrue(track.streamUrl.startsWith("https://"))
       assertTrue(track.streamUrl.endsWith(".mp3"))
     }
+  }
+
+  @Test
+  fun `story reaction types and model link cleanly to storyId`() {
+    assertEquals(StoryReactionType.HEART, StoryReactionType.fromWire("heart"))
+    assertEquals(StoryReactionType.FIRE, StoryReactionType.fromWire("FIRE"))
+    assertEquals(StoryReactionType.CLAP, StoryReactionType.fromWire(" clap "))
+    assertNull(StoryReactionType.fromWire("thumbs_up"))
+    assertNull(StoryReactionType.fromWire(null))
+
+    val reaction = StoryReaction(
+      storyId = "story_42",
+      storyOwnerId = "owner_1",
+      userId = "viewer_2",
+      username = "aarav_star",
+      reactionType = StoryReactionType.FIRE.wireValue
+    )
+    assertEquals("story_42", reaction.storyId)
+    assertEquals("fire", reaction.reactionType)
+    assertEquals("public", reaction.visibility)
   }
 }

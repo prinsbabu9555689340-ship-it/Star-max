@@ -543,3 +543,101 @@ test("Blue Tick verification prevents self-approval and enforces pending verific
     bobDb.collection("verification_requests").where("userId", "==", ALICE_UID).get()
   );
 });
+
+test("Story reactions support heart, fire, and clap linked to storyId with strict ownership and validation", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const now = new Date(Date.now() - 2000);
+
+  // Unauthenticated reads and writes are rejected
+  await assertFails(
+    unauthDb.collection("story_reactions")
+      .where("visibility", "==", "public")
+      .where("storyId", "==", "story_1")
+      .get()
+  );
+  await assertFails(
+    unauthDb.collection("story_reactions").doc("react_unauth").set({
+      storyId: "story_1",
+      storyOwnerId: ALICE_UID,
+      userId: BOB_UID,
+      username: "bob_photo",
+      reactionType: "heart",
+      visibility: "public",
+      createdAt: now,
+    })
+  );
+
+  // Bob can react with heart, fire, and clap linked to story_1
+  for (const [idx, type] of ["heart", "fire", "clap"].entries()) {
+    await assertSucceeds(
+      bobDb.collection("story_reactions").doc(`react_${idx}`).set({
+        storyId: "story_1",
+        storyOwnerId: ALICE_UID,
+        userId: BOB_UID,
+        username: "bob_photo",
+        reactionType: type,
+        visibility: "public",
+        createdAt: now,
+      })
+    );
+  }
+
+  // Invalid reactionType is rejected
+  await assertFails(
+    bobDb.collection("story_reactions").doc("react_bad_type").set({
+      storyId: "story_1",
+      storyOwnerId: ALICE_UID,
+      userId: BOB_UID,
+      username: "bob_photo",
+      reactionType: "laugh",
+      visibility: "public",
+      createdAt: now,
+    })
+  );
+
+  // Spoofed userId or extra @DocumentId 'id' field is rejected
+  await assertFails(
+    bobDb.collection("story_reactions").doc("react_spoof").set({
+      storyId: "story_1",
+      storyOwnerId: ALICE_UID,
+      userId: ALICE_UID,
+      username: "alice_star",
+      reactionType: "fire",
+      visibility: "public",
+      createdAt: now,
+    })
+  );
+  await assertFails(
+    bobDb.collection("story_reactions").doc("react_extra_id").set({
+      id: "react_extra_id",
+      storyId: "story_1",
+      storyOwnerId: ALICE_UID,
+      userId: BOB_UID,
+      username: "bob_photo",
+      reactionType: "clap",
+      visibility: "public",
+      createdAt: now,
+    })
+  );
+
+  // Filtered query matching Kotlin repository succeeds; unfiltered list fails
+  await assertSucceeds(
+    aliceDb.collection("story_reactions")
+      .where("visibility", "==", "public")
+      .where("storyId", "==", "story_1")
+      .get()
+  );
+  await assertFails(aliceDb.collection("story_reactions").get());
+
+  // Updates are immutable; only reaction owner can delete
+  await assertFails(
+    bobDb.collection("story_reactions").doc("react_0").update({
+      reactionType: "fire",
+    })
+  );
+  await assertFails(aliceDb.collection("story_reactions").doc("react_0").delete());
+  await assertSucceeds(bobDb.collection("story_reactions").doc("react_0").delete());
+});
+

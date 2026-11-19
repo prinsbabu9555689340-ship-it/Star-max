@@ -151,6 +151,21 @@
       },
       "required": ["userId", "authorUsername", "mediaType", "visibility", "expiresAtMillis", "createdAt"]
     },
+    "StoryReaction": {
+      "title": "StoryReaction",
+      "description": "User reaction (heart, fire, clap) linked to a specific Story ID",
+      "type": "object",
+      "properties": {
+        "storyId": { "type": "string" },
+        "storyOwnerId": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "reactionType": { "type": "string", "enum": ["heart", "fire", "clap"] },
+        "visibility": { "type": "string", "enum": ["public"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storyId", "storyOwnerId", "userId", "username", "reactionType", "visibility", "createdAt"]
+    },
     "Reel": {
       "title": "Reel",
       "description": "Short vertical video reel",
@@ -339,6 +354,10 @@
     "/stories/{storyId}": {
       "schema": { "$ref": "#/entities/Story" },
       "description": "24-hour disappearing stories with optional filters and music"
+    },
+    "/story_reactions/{reactionId}": {
+      "schema": { "$ref": "#/entities/StoryReaction" },
+      "description": "User reactions (heart, fire, clap) linked to a specific story ID"
     },
     "/reels/{reelId}": {
       "schema": { "$ref": "#/entities/Reel" },

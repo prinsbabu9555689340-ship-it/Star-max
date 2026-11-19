@@ -167,28 +167,19 @@ fun AppNavigation(authOverride: FirebaseAuth? = null) {
                 sessionManager.resolveFirestore(activeRecord.slotName)
             }
 
-            val currentUser = if (slotAuth != null) {
-                val userFlow = remember(slotAuth) {
-                    slotAuth.authStateFlow().catch { emit(null) }
-                }
-                val collected by userFlow.collectAsStateWithLifecycle(
-                    initialValue = runCatching { slotAuth.currentUser }.getOrNull()
-                )
-                collected
-            } else {
-                null
+            val userFlow = remember(slotAuth) {
+                slotAuth.authStateFlow().catch { emit(null) }
             }
+            val currentUser by userFlow.collectAsStateWithLifecycle(
+                initialValue = runCatching { slotAuth.currentUser }.getOrNull()
+            )
 
-            if (
-                slotAuth != null &&
-                slotDb != null &&
-                currentUser != null &&
-                currentUser.uid == activeRecord.uid
-            ) {
-                key(currentUser.uid) {
+            val signedInUser = currentUser
+            if (signedInUser != null && signedInUser.uid == activeRecord.uid) {
+                key(signedInUser.uid) {
                     StarMaxAuthenticatedShell(
-                        currentUserId = currentUser.uid,
-                        firebaseUser = currentUser,
+                        currentUserId = signedInUser.uid,
+                        firebaseUser = signedInUser,
                         db = slotDb,
                         auth = slotAuth,
                         sessionManager = sessionManager,
@@ -289,6 +280,7 @@ private fun StarMaxAuthenticatedShell(
     val unreadMessages by viewModel.unreadMessagesCount.collectAsStateWithLifecycle()
     val commentsState by viewModel.commentsState.collectAsStateWithLifecycle()
     val messagesState by viewModel.messagesState.collectAsStateWithLifecycle()
+    val storyReactionsState by viewModel.storyReactionsState.collectAsStateWithLifecycle()
     val actionError by viewModel.actionError.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
 
@@ -823,10 +815,19 @@ private fun StarMaxAuthenticatedShell(
     }
 
     activeStoryViewer?.let { (stories, startIndex) ->
+        val activeStoryReactions = (storyReactionsState as? UiState.Success)?.data.orEmpty()
         StoryViewerDialog(
             stories = stories,
             initialIndex = startIndex,
-            onDismiss = { activeStoryViewer = null },
+            reactions = activeStoryReactions,
+            onStoryChanged = { story -> viewModel.openStory(story.id) },
+            onReactToStory = { story, reactionType ->
+                viewModel.reactToStory(story, reactionType)
+            },
+            onDismiss = {
+                activeStoryViewer = null
+                viewModel.closeStory()
+            },
             onSendReply = { story, replyText ->
                 val peer = profiles.firstOrNull { it.userId == story.userId }
                     ?: UserProfile(
@@ -837,6 +838,7 @@ private fun StarMaxAuthenticatedShell(
                     )
                 viewModel.sendMessage(peer, "Replied to your story: $replyText")
                 activeStoryViewer = null
+                viewModel.closeStory()
             }
         )
     }

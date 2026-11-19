@@ -103,44 +103,60 @@ class AccountSessionManager(context: Context) {
     val activeUid: StateFlow<String?> = _activeUid.asStateFlow()
 
     fun isFirebaseConfigured(): Boolean {
-        return resolveFirebaseApp("") != null && databaseIdOrNull() != null
+        return ensureDefaultFirebaseApp() != null
     }
 
-    private fun databaseIdOrNull(): String? {
-        return runCatching { appContext.getString(R.string.firestore_database_id) }
-            .getOrNull()
-            ?.takeIf { it.isNotBlank() }
+    private fun databaseId(): String {
+        return appContext.getString(R.string.firestore_database_id)
     }
 
-    fun resolveFirebaseApp(slotName: String): FirebaseApp? {
-        return try {
-            val defaultApp = FirebaseApp.getApps(appContext)
+    fun ensureDefaultFirebaseApp(): FirebaseApp? {
+        return runCatching {
+            FirebaseApp.getApps(appContext)
                 .firstOrNull { it.name == FirebaseApp.DEFAULT_APP_NAME }
                 ?: FirebaseApp.initializeApp(appContext)
-                ?: return null
-            if (slotName.isBlank() || slotName == FirebaseApp.DEFAULT_APP_NAME) {
-                defaultApp
-            } else {
-                FirebaseApp.getApps(appContext).firstOrNull { it.name == slotName }
-                    ?: FirebaseApp.initializeApp(appContext, defaultApp.options, slotName)
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "Unable to resolve FirebaseApp for slot '$slotName'", t)
-            null
+                ?: FirebaseApp.getInstance()
+        }.getOrElse { err ->
+            Log.w(TAG, "Unable to initialize default FirebaseApp", err)
+            runCatching { FirebaseApp.getInstance() }.getOrNull()
         }
     }
 
-    fun resolveAuth(slotName: String = ""): FirebaseAuth? {
+    fun resolveFirebaseApp(slotName: String): FirebaseApp? {
+        val defaultApp = ensureDefaultFirebaseApp() ?: return null
+        if (slotName.isBlank() || slotName == FirebaseApp.DEFAULT_APP_NAME) {
+            return defaultApp
+        }
         return runCatching {
-            resolveFirebaseApp(slotName)?.let { FirebaseAuth.getInstance(it) }
-        }.getOrNull()
+            FirebaseApp.getApps(appContext).firstOrNull { it.name == slotName }
+                ?: FirebaseApp.initializeApp(appContext, defaultApp.options, slotName)
+        }.getOrElse { err ->
+            Log.w(TAG, "Falling back to default FirebaseApp for slot '$slotName'", err)
+            defaultApp
+        }
     }
 
-    fun resolveFirestore(slotName: String = ""): FirebaseFirestore? {
-        val dbId = databaseIdOrNull() ?: return null
-        return runCatching {
-            resolveFirebaseApp(slotName)?.let { FirebaseFirestore.getInstance(it, dbId) }
-        }.getOrNull()
+    fun resolveAuth(slotName: String = ""): FirebaseAuth {
+        val app = resolveFirebaseApp(slotName)
+        return if (app != null) {
+            runCatching { FirebaseAuth.getInstance(app) }
+                .getOrElse { FirebaseAuth.getInstance() }
+        } else {
+            ensureDefaultFirebaseApp()
+            FirebaseAuth.getInstance()
+        }
+    }
+
+    fun resolveFirestore(slotName: String = ""): FirebaseFirestore {
+        val dbId = databaseId()
+        val app = resolveFirebaseApp(slotName)
+        return if (app != null) {
+            runCatching { FirebaseFirestore.getInstance(app, dbId) }
+                .getOrElse { FirebaseFirestore.getInstance(dbId) }
+        } else {
+            ensureDefaultFirebaseApp()
+            FirebaseFirestore.getInstance(dbId)
+        }
     }
 
     fun allocateSlotForAccount(uid: String? = null): String {
@@ -361,7 +377,7 @@ class AccountSessionManager(context: Context) {
             persistActiveUid(uid)
             return true
         }
-        val auth = resolveAuth(record.slotName) ?: return false
+        val auth = runCatching { resolveAuth(record.slotName) }.getOrNull() ?: return false
         if (auth.currentUser?.uid != uid) {
             return false
         }
@@ -388,10 +404,10 @@ class AccountSessionManager(context: Context) {
         if (active != null) {
             persistAccounts(_savedAccounts.value.filterNot { it.uid == active.uid })
             if (active.authProvider != "local_otp") {
-                runCatching { resolveAuth(active.slotName)?.signOut() }
+                runCatching { resolveAuth(active.slotName).signOut() }
             }
         } else {
-            runCatching { resolveAuth("")?.signOut() }
+            runCatching { resolveAuth("").signOut() }
         }
         scope.launch {
             withContext(NonCancellable) {
@@ -410,9 +426,9 @@ class AccountSessionManager(context: Context) {
         persistActiveUid(null)
         persistAccounts(emptyList())
         all.filter { it.authProvider != "local_otp" }.forEach { rec ->
-            runCatching { resolveAuth(rec.slotName)?.signOut() }
+            runCatching { resolveAuth(rec.slotName).signOut() }
         }
-        runCatching { resolveAuth("")?.signOut() }
+        runCatching { resolveAuth("").signOut() }
         scope.launch {
             withContext(NonCancellable) {
                 runCatching { credentialManager?.clearCredentialState(ClearCredentialStateRequest()) }
