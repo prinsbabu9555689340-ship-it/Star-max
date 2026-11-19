@@ -46,13 +46,16 @@ private fun initDefaultFirestore(context: Context): FirebaseFirestore {
     return FirebaseFirestore.getInstance(appCtx.getString(R.string.firestore_database_id))
 }
 
+private fun initDefaultAuth(): FirebaseAuth? =
+    runCatching { FirebaseAuth.getInstance() }.getOrNull()
+
 class SocialRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth? = null
 ) {
     constructor(context: Context) : this(
         db = initDefaultFirestore(context),
-        auth = FirebaseAuth.getInstance()
+        auth = initDefaultAuth()
     )
 
     private fun resolveAuth(): FirebaseAuth? =

@@ -3,4 +3,9 @@
     <string name="story_reaction_heart_cd">React to story with heart</string>
     <string name="story_reaction_fire_cd">React to story with fire</string>
     <string name="story_reaction_clap_cd">React to story with clap</string>
+    <string name="crash_screen_title">Something went wrong</string>
+    <string name="crash_screen_subtitle">Star Max caught an unexpected error instead of closing.</string>
+    <string name="crash_screen_retry">Try Again</string>
+    <string name="crash_screen_copy">Copy Error Details</string>
+    <string name="crash_screen_copied">Error details copied</string>
 </resources>

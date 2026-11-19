@@ -221,4 +221,32 @@ class ExampleRobolectricTest {
     assertEquals("fire", reaction.reactionType)
     assertEquals("public", reaction.visibility)
   }
+
+  @Test
+  fun `account session manager safely returns null instead of crashing when firebase is uninitialized`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    FirebaseApp.getApps(context).toList().forEach { app ->
+      runCatching { app.delete() }
+    }
+    val manager = AccountSessionManager(context)
+    // Must never throw IllegalStateException on launch even if Firebase is unavailable
+    runCatching { manager.resolveAuth() }.getOrThrow()
+    runCatching { manager.resolveFirestore() }.getOrThrow()
+  }
+
+  @Test
+  fun `global crash reporter captures exact exception message and clears cleanly`() {
+    AppCrashReporter.clear()
+    val report = AppCrashReporter.report(
+      IllegalStateException("Simulated startup failure"),
+      threadName = "worker-1"
+    )
+    assertEquals("IllegalStateException", report.exceptionName)
+    assertEquals("Simulated startup failure", report.message)
+    assertEquals("worker-1", report.threadName)
+    assertNotNull(AppCrashReporter.crashReport.value)
+
+    AppCrashReporter.clear()
+    assertNull(AppCrashReporter.crashReport.value)
+  }
 }

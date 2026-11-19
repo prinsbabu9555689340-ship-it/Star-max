@@ -161,60 +161,13 @@ fun AppNavigation(authOverride: FirebaseAuth? = null) {
             )
         } else {
             val slotAuth = remember(activeRecord, authOverride) {
-                authOverride ?: sessionManager.resolveAuth(activeRecord.slotName)
+                authOverride ?: runCatching { sessionManager.resolveAuth(activeRecord.slotName) }.getOrNull()
             }
             val slotDb = remember(activeRecord) {
-                sessionManager.resolveFirestore(activeRecord.slotName)
+                runCatching { sessionManager.resolveFirestore(activeRecord.slotName) }.getOrNull()
             }
 
-            val userFlow = remember(slotAuth) {
-                slotAuth.authStateFlow().catch { emit(null) }
-            }
-            val currentUser by userFlow.collectAsStateWithLifecycle(
-                initialValue = runCatching { slotAuth.currentUser }.getOrNull()
-            )
-
-            val signedInUser = currentUser
-            if (signedInUser != null && signedInUser.uid == activeRecord.uid) {
-                key(signedInUser.uid) {
-                    StarMaxAuthenticatedShell(
-                        currentUserId = signedInUser.uid,
-                        firebaseUser = signedInUser,
-                        db = slotDb,
-                        auth = slotAuth,
-                        sessionManager = sessionManager,
-                        savedAccounts = savedAccounts,
-                        themePreferences = themePreferences ?: ThemePreferences(appContext),
-                        onSwitchAccount = { targetRecord ->
-                            val switched = sessionManager.switchToSavedAccount(targetRecord.uid)
-                            if (!switched) {
-                                showAddAccountScreen = true
-                            }
-                        },
-                        onAddAccount = {
-                            showAddAccountScreen = true
-                        },
-                        onSignOut = {
-                            showAddAccountScreen = false
-                            sessionManager.logoutActiveAccount(
-                                credentialManager = credentialManager,
-                                scope = scope
-                            )
-                        },
-                        onSignOutAll = {
-                            showAddAccountScreen = false
-                            sessionManager.logoutAllAccounts(
-                                credentialManager = credentialManager,
-                                scope = scope
-                            )
-                        }
-                    )
-                }
-            } else {
-                // Force real Firebase Auth session rather than any local offline fallback
-                LaunchedEffect(activeRecord.uid) {
-                    sessionManager.setActiveUid(null)
-                }
+            if (slotAuth == null || slotDb == null) {
                 AuthScreen(
                     accountSessionManager = sessionManager,
                     isAddAccountMode = false,
@@ -223,6 +176,64 @@ fun AppNavigation(authOverride: FirebaseAuth? = null) {
                         sessionManager.saveAccount(record, makeActive = true)
                     }
                 )
+            } else {
+                val userFlow = remember(slotAuth) {
+                    slotAuth.authStateFlow().catch { emit(null) }
+                }
+                val currentUser by userFlow.collectAsStateWithLifecycle(
+                    initialValue = runCatching { slotAuth.currentUser }.getOrNull()
+                )
+
+                val signedInUser = currentUser
+                if (signedInUser != null && signedInUser.uid == activeRecord.uid) {
+                    key(signedInUser.uid) {
+                        StarMaxAuthenticatedShell(
+                            currentUserId = signedInUser.uid,
+                            firebaseUser = signedInUser,
+                            db = slotDb,
+                            auth = slotAuth,
+                            sessionManager = sessionManager,
+                            savedAccounts = savedAccounts,
+                            themePreferences = themePreferences ?: ThemePreferences(appContext),
+                            onSwitchAccount = { targetRecord ->
+                                val switched = sessionManager.switchToSavedAccount(targetRecord.uid)
+                                if (!switched) {
+                                    showAddAccountScreen = true
+                                }
+                            },
+                            onAddAccount = {
+                                showAddAccountScreen = true
+                            },
+                            onSignOut = {
+                                showAddAccountScreen = false
+                                sessionManager.logoutActiveAccount(
+                                    credentialManager = credentialManager,
+                                    scope = scope
+                                )
+                            },
+                            onSignOutAll = {
+                                showAddAccountScreen = false
+                                sessionManager.logoutAllAccounts(
+                                    credentialManager = credentialManager,
+                                    scope = scope
+                                )
+                            }
+                        )
+                    }
+                } else {
+                    // Force real Firebase Auth session rather than any local offline fallback
+                    LaunchedEffect(activeRecord.uid) {
+                        sessionManager.setActiveUid(null)
+                    }
+                    AuthScreen(
+                        accountSessionManager = sessionManager,
+                        isAddAccountMode = false,
+                        onAccountAuthenticated = { record ->
+                            showAddAccountScreen = false
+                            sessionManager.saveAccount(record, makeActive = true)
+                        }
+                    )
+                }
             }
         }
     }

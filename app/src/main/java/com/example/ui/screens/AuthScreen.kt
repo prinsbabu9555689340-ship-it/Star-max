@@ -120,10 +120,46 @@ fun AuthScreen(
     val slotName = remember(isAddAccountMode) {
         accountSessionManager.allocateSlotForAccount()
     }
-    val slotAuth = remember(slotName) { accountSessionManager.resolveAuth(slotName) }
-    val slotDb = remember(slotName) { accountSessionManager.resolveFirestore(slotName) }
-    val slotRepository = remember(slotDb, slotAuth) {
-        SocialRepository(db = slotDb, auth = slotAuth)
+    var cachedSlotAuth by remember(slotName) {
+        mutableStateOf(runCatching { accountSessionManager.resolveAuth(slotName) }.getOrNull())
+    }
+    var cachedSlotDb by remember(slotName) {
+        mutableStateOf(runCatching { accountSessionManager.resolveFirestore(slotName) }.getOrNull())
+    }
+    var cachedSlotRepository by remember(cachedSlotDb, cachedSlotAuth) {
+        mutableStateOf(
+            cachedSlotDb?.let { db ->
+                runCatching { SocialRepository(db = db, auth = cachedSlotAuth) }.getOrNull()
+            }
+        )
+    }
+
+    LaunchedEffect(slotName) {
+        if (cachedSlotAuth == null) {
+            cachedSlotAuth = runCatching { accountSessionManager.resolveAuth(slotName) }.getOrNull()
+        }
+        if (cachedSlotDb == null) {
+            cachedSlotDb = runCatching { accountSessionManager.resolveFirestore(slotName) }.getOrNull()
+        }
+    }
+
+    fun getOrInitAuth(): FirebaseAuth? {
+        cachedSlotAuth?.let { return it }
+        val resolved = runCatching { accountSessionManager.resolveAuth(slotName) }.getOrNull()
+        if (resolved != null) cachedSlotAuth = resolved
+        return resolved
+    }
+
+    fun getOrInitRepository(): SocialRepository? {
+        cachedSlotRepository?.let { return it }
+        val auth = getOrInitAuth()
+        val db = cachedSlotDb ?: runCatching { accountSessionManager.resolveFirestore(slotName) }
+            .getOrNull()
+            ?.also { cachedSlotDb = it }
+        if (db == null) return null
+        return runCatching { SocialRepository(db = db, auth = auth) }
+            .getOrNull()
+            ?.also { cachedSlotRepository = it }
     }
 
     var selectedTab by remember { mutableStateOf(if (isAddAccountMode) AuthTab.SIGN_UP else AuthTab.LOG_IN) }
@@ -171,8 +207,13 @@ fun AuthScreen(
     }
 
     suspend fun finalizePhoneCredential(credential: PhoneAuthCredential) {
-        val auth = slotAuth
-        val repo = slotRepository
+        val auth = getOrInitAuth()
+        val repo = getOrInitRepository()
+        if (auth == null || repo == null) {
+            isBusy = false
+            errorMessage = "Firebase is still initializing. Please try again in a moment."
+            return
+        }
 
         val signInRes = PhoneAuthHelper.signInWithPhoneCredential(auth, credential)
         val user = signInRes.getOrElse { err ->
@@ -272,6 +313,13 @@ fun AuthScreen(
             return
         }
 
+        val auth = getOrInitAuth()
+        if (auth == null) {
+            isBusy = false
+            errorMessage = "Firebase Auth is still initializing. Please tap again in a moment."
+            return
+        }
+
         otpFlowIsSignUp = isSignUp
         activeOtpPhoneE164 = targetPhoneE164
         isBusy = true
@@ -280,7 +328,7 @@ fun AuthScreen(
 
         PhoneAuthHelper.sendVerificationOtp(
             activity = currentActivity,
-            auth = slotAuth,
+            auth = auth,
             phoneE164 = targetPhoneE164,
             resendToken = useResendToken,
             onAutoVerified = { credential ->
@@ -520,7 +568,13 @@ fun AuthScreen(
                                             else -> {
                                                 isBusy = true
                                                 scope.launch {
-                                                    val unameRes = slotRepository.checkUsernameAvailable(cleanUser)
+                                                    val repo = getOrInitRepository()
+                                                    if (repo == null) {
+                                                        isBusy = false
+                                                        errorMessage = "Firebase is still initializing. Please tap Send OTP again in a moment."
+                                                        return@launch
+                                                    }
+                                                    val unameRes = repo.checkUsernameAvailable(cleanUser)
                                                     if (unameRes.isFailure) {
                                                         isBusy = false
                                                         errorMessage = unameRes.exceptionOrNull()?.localizedMessage
@@ -532,7 +586,7 @@ fun AuthScreen(
                                                         errorMessage = "Username @$cleanUser is already taken."
                                                         return@launch
                                                     }
-                                                    val phoneRes = slotRepository.checkPhoneAvailable(digits)
+                                                    val phoneRes = repo.checkPhoneAvailable(digits)
                                                     if (phoneRes.isFailure) {
                                                         isBusy = false
                                                         errorMessage = phoneRes.exceptionOrNull()?.localizedMessage
@@ -606,7 +660,13 @@ fun AuthScreen(
 
                                         isBusy = true
                                         scope.launch {
-                                            val lookupRes = slotRepository.lookupAccountForLogin(loginIdentifier)
+                                            val repo = getOrInitRepository()
+                                            if (repo == null) {
+                                                isBusy = false
+                                                errorMessage = "Firebase is still initializing. Please tap Log In again in a moment."
+                                                return@launch
+                                            }
+                                            val lookupRes = repo.lookupAccountForLogin(loginIdentifier)
                                             if (lookupRes.isFailure) {
                                                 isBusy = false
                                                 errorMessage = lookupRes.exceptionOrNull()?.localizedMessage
@@ -738,10 +798,10 @@ fun AuthScreen(
                         onGoogleSignInClicked(
                             context = context,
                             credentialManager = credentialManager,
-                            targetAuth = slotAuth,
+                            targetAuth = getOrInitAuth(),
                             onAuthSuccess = { user: FirebaseUser ->
                                 scope.launch {
-                                    slotRepository.ensureUserProfile(user)
+                                    getOrInitRepository()?.ensureUserProfile(user)
                                     isBusy = false
                                     val handle = user.displayName
                                         ?.lowercase()
