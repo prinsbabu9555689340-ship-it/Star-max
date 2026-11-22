@@ -6,6 +6,7 @@ import com.example.data.firebase.AccountSessionManager
 import com.example.data.firebase.OperationType
 import com.example.data.firebase.PasswordHasher
 import com.example.data.firebase.PhoneFormatUtils
+import com.example.data.firebase.SocialRepository
 import com.example.data.firebase.handleFirestoreError
 import com.example.data.model.SavedAccountRecord
 import com.example.data.model.StoryFilter
@@ -16,6 +17,7 @@ import com.example.data.model.UserProfile
 import com.example.data.model.UserSettings
 import com.example.data.model.VerificationRequest
 import com.google.firebase.FirebaseApp
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -248,5 +250,26 @@ class ExampleRobolectricTest {
 
     AppCrashReporter.clear()
     assertNull(AppCrashReporter.crashReport.value)
+  }
+
+  @Test
+  fun `offline error detector matches client offline and UNAVAILABLE without masking permission errors`() {
+    val offlineErr = FirebaseFirestoreException(
+      "Failed to get document because the client is offline.",
+      FirebaseFirestoreException.Code.UNAVAILABLE
+    )
+    assertTrue(SocialRepository.isOfflineOrUnavailableError(offlineErr))
+    assertTrue(
+      SocialRepository.isOfflineOrUnavailableError(
+        IllegalStateException("Failed to get document because the client is offline")
+      )
+    )
+
+    val permissionErr = FirebaseFirestoreException(
+      "Missing or insufficient permissions.",
+      FirebaseFirestoreException.Code.PERMISSION_DENIED
+    )
+    assertFalse(SocialRepository.isOfflineOrUnavailableError(permissionErr))
+    assertFalse(SocialRepository.isOfflineOrUnavailableError(null))
   }
 }

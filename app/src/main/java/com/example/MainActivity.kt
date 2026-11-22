@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.firebase.AccountSessionManager
 import com.example.ui.AppNavigation
 import com.example.ui.theme.StarMaxTheme
 import com.google.firebase.FirebaseApp
@@ -139,7 +140,9 @@ class MainActivity : ComponentActivity() {
             .getOrNull()
         runCatching {
             val dbId = getString(R.string.firestore_database_id)
-            FirebaseFirestore.getInstance(dbId)
+            val db = FirebaseFirestore.getInstance(dbId)
+            AccountSessionManager.configureFirestoreOnline(db, "default::$dbId")
+            db
         }
             .onFailure { Log.w(TAG, "FirebaseFirestore.getInstance skipped", it) }
             .getOrNull()

@@ -10,6 +10,10 @@ import com.example.data.model.SavedAccountRecord
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.PersistentCacheSettings
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -149,12 +153,13 @@ class AccountSessionManager(context: Context) {
     fun resolveFirestore(slotName: String = ""): FirebaseFirestore? {
         val dbId = databaseId() ?: return null
         val app = resolveFirebaseApp(slotName) ?: ensureDefaultFirebaseApp()
-        return if (app != null) {
+        val db = if (app != null) {
             runCatching { FirebaseFirestore.getInstance(app, dbId) }.getOrNull()
                 ?: runCatching { FirebaseFirestore.getInstance(dbId) }.getOrNull()
         } else {
             runCatching { FirebaseFirestore.getInstance(dbId) }.getOrNull()
         }
+        return db?.also { configureFirestoreOnline(it, "${slotName.ifBlank { "default" }}::$dbId") }
     }
 
     fun allocateSlotForAccount(uid: String? = null): String {
@@ -569,11 +574,31 @@ class AccountSessionManager(context: Context) {
         prefs.edit().putString(KEY_REGISTERED_ACCOUNTS, arr.toString()).apply()
     }
 
-    private companion object {
-        const val TAG = "AccountSessionMgr"
-        const val PREFS_NAME = "starmax_saved_accounts"
-        const val KEY_SAVED_ACCOUNTS = "saved_accounts_json"
-        const val KEY_REGISTERED_ACCOUNTS = "registered_accounts_json"
-        const val KEY_ACTIVE_UID = "active_uid"
+    companion object {
+        private const val TAG = "AccountSessionMgr"
+        private const val PREFS_NAME = "starmax_saved_accounts"
+        private const val KEY_SAVED_ACCOUNTS = "saved_accounts_json"
+        private const val KEY_REGISTERED_ACCOUNTS = "registered_accounts_json"
+        private const val KEY_ACTIVE_UID = "active_uid"
+        private val configuredFirestoreKeys: MutableSet<String> =
+            Collections.newSetFromMap(ConcurrentHashMap())
+
+        fun configureFirestoreOnline(db: FirebaseFirestore, cacheKey: String = "default") {
+            if (configuredFirestoreKeys.add(cacheKey)) {
+                runCatching {
+                    val settings = FirebaseFirestoreSettings.Builder()
+                        .setLocalCacheSettings(PersistentCacheSettings.newBuilder().build())
+                        .build()
+                    db.firestoreSettings = settings
+                }.onFailure { err ->
+                    Log.d(TAG, "Firestore settings already initialized for $cacheKey: ${err.message}")
+                }
+            }
+            runCatching {
+                db.enableNetwork()
+            }.onFailure { err ->
+                Log.w(TAG, "Firestore enableNetwork skipped for $cacheKey", err)
+            }
+        }
     }
 }

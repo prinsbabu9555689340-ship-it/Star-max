@@ -569,35 +569,33 @@ fun AuthScreen(
                                                 isBusy = true
                                                 scope.launch {
                                                     val repo = getOrInitRepository()
-                                                    if (repo == null) {
-                                                        isBusy = false
-                                                        errorMessage = "Firebase is still initializing. Please tap Send OTP again in a moment."
-                                                        return@launch
+                                                    if (repo != null) {
+                                                        val unameRes = repo.checkUsernameAvailable(cleanUser)
+                                                        if (unameRes.getOrNull() == false) {
+                                                            isBusy = false
+                                                            errorMessage = "Username @$cleanUser is already taken."
+                                                            return@launch
+                                                        }
+                                                        if (unameRes.isFailure && !SocialRepository.isOfflineOrUnavailableError(unameRes.exceptionOrNull())) {
+                                                            isBusy = false
+                                                            errorMessage = unameRes.exceptionOrNull()?.localizedMessage
+                                                                ?: "Could not verify username availability."
+                                                            return@launch
+                                                        }
+                                                        val phoneRes = repo.checkPhoneAvailable(digits)
+                                                        if (phoneRes.getOrNull() == false) {
+                                                            isBusy = false
+                                                            errorMessage = "This mobile number is already registered. Please log in."
+                                                            return@launch
+                                                        }
+                                                        if (phoneRes.isFailure && !SocialRepository.isOfflineOrUnavailableError(phoneRes.exceptionOrNull())) {
+                                                            isBusy = false
+                                                            errorMessage = phoneRes.exceptionOrNull()?.localizedMessage
+                                                                ?: "Could not verify mobile number."
+                                                            return@launch
+                                                        }
                                                     }
-                                                    val unameRes = repo.checkUsernameAvailable(cleanUser)
-                                                    if (unameRes.isFailure) {
-                                                        isBusy = false
-                                                        errorMessage = unameRes.exceptionOrNull()?.localizedMessage
-                                                            ?: "Could not verify username availability."
-                                                        return@launch
-                                                    }
-                                                    if (unameRes.getOrNull() == false) {
-                                                        isBusy = false
-                                                        errorMessage = "Username @$cleanUser is already taken."
-                                                        return@launch
-                                                    }
-                                                    val phoneRes = repo.checkPhoneAvailable(digits)
-                                                    if (phoneRes.isFailure) {
-                                                        isBusy = false
-                                                        errorMessage = phoneRes.exceptionOrNull()?.localizedMessage
-                                                            ?: "Could not verify mobile number."
-                                                        return@launch
-                                                    }
-                                                    if (phoneRes.getOrNull() == false) {
-                                                        isBusy = false
-                                                        errorMessage = "This mobile number is already registered. Please log in."
-                                                        return@launch
-                                                    }
+                                                    // Proceed with SMS OTP verification even if pre-check client is temporarily offline
                                                     triggerOtpSend(
                                                         targetPhoneE164 = PhoneFormatUtils.toIndianE164(digits),
                                                         isSignUp = true
@@ -661,19 +659,59 @@ fun AuthScreen(
                                         isBusy = true
                                         scope.launch {
                                             val repo = getOrInitRepository()
-                                            if (repo == null) {
+                                            val lookupRes = repo?.lookupAccountForLogin(loginIdentifier)
+                                            val lookupErr = lookupRes?.exceptionOrNull()
+                                            val isOffline = repo == null ||
+                                                (lookupRes != null && lookupRes.isFailure && SocialRepository.isOfflineOrUnavailableError(lookupErr))
+
+                                            if (isOffline) {
+                                                // Fallback when Firestore pre-check is temporarily offline
+                                                val localMatch = accountSessionManager.authenticateLocalAccount(loginIdentifier, loginPassword)
+                                                if (localMatch.isSuccess) {
+                                                    val localAcct = localMatch.getOrThrow()
+                                                    if (accountSessionManager.switchToSavedAccount(localAcct.uid)) {
+                                                        isBusy = false
+                                                        onAccountAuthenticated(localAcct)
+                                                        return@launch
+                                                    }
+                                                    if (localAcct.phoneE164.isNotBlank()) {
+                                                        pendingLoginLookup = AuthLookupRecord(
+                                                            userId = localAcct.uid,
+                                                            usernameLower = localAcct.username.lowercase(),
+                                                            phoneE164 = localAcct.phoneE164,
+                                                            verified = localAcct.verified
+                                                        )
+                                                        infoMessage = "Sending SMS OTP to ${PhoneFormatUtils.maskPhone(localAcct.phoneE164)}..."
+                                                        triggerOtpSend(
+                                                            targetPhoneE164 = localAcct.phoneE164,
+                                                            isSignUp = false
+                                                        )
+                                                        return@launch
+                                                    }
+                                                }
+                                                val directDigits = PhoneFormatUtils.normalizeIndianPhoneDigits(loginIdentifier)
+                                                if (directDigits != null) {
+                                                    val targetE164 = PhoneFormatUtils.toIndianE164(directDigits)
+                                                    pendingLoginLookup = null
+                                                    infoMessage = "Sending SMS OTP to ${PhoneFormatUtils.maskPhone(targetE164)}..."
+                                                    triggerOtpSend(
+                                                        targetPhoneE164 = targetE164,
+                                                        isSignUp = false
+                                                    )
+                                                    return@launch
+                                                }
                                                 isBusy = false
-                                                errorMessage = "Firebase is still initializing. Please tap Log In again in a moment."
+                                                errorMessage = "Cloud lookup is temporarily offline. Enter your 10-digit +91 mobile number to log in via SMS OTP."
                                                 return@launch
                                             }
-                                            val lookupRes = repo.lookupAccountForLogin(loginIdentifier)
-                                            if (lookupRes.isFailure) {
+
+                                            if (lookupRes != null && lookupRes.isFailure) {
                                                 isBusy = false
-                                                errorMessage = lookupRes.exceptionOrNull()?.localizedMessage
+                                                errorMessage = lookupErr?.localizedMessage
                                                     ?: "Unable to look up account."
                                                 return@launch
                                             }
-                                            val lookup = lookupRes.getOrNull()
+                                            val lookup = lookupRes?.getOrNull()
                                             if (lookup == null) {
                                                 isBusy = false
                                                 errorMessage = "No account found matching \"$loginIdentifier\". Please check or Sign Up."

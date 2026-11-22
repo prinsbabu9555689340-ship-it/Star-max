@@ -25,25 +25,36 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TAG = "SocialRepository"
+private const val LOOKUP_TIMEOUT_MS = 4_500L
+private const val WRITE_ACK_TIMEOUT_MS = 3_500L
 
 private fun initDefaultFirestore(context: Context): FirebaseFirestore {
     val appCtx = context.applicationContext ?: context
     if (FirebaseApp.getApps(appCtx).isEmpty()) {
         runCatching { FirebaseApp.initializeApp(appCtx) }
     }
-    return FirebaseFirestore.getInstance(appCtx.getString(R.string.firestore_database_id))
+    val dbId = appCtx.getString(R.string.firestore_database_id)
+    val db = FirebaseFirestore.getInstance(dbId)
+    AccountSessionManager.configureFirestoreOnline(db, "default::$dbId")
+    return db
 }
 
 private fun initDefaultAuth(): FirebaseAuth? =
@@ -53,6 +64,10 @@ class SocialRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth? = null
 ) {
+    init {
+        runCatching { db.enableNetwork() }
+    }
+
     constructor(context: Context) : this(
         db = initDefaultFirestore(context),
         auth = initDefaultAuth()
@@ -91,6 +106,40 @@ class SocialRepository(
         return cleaned
     }
 
+    private suspend fun DocumentReference.getWithOnlineFallback(
+        timeoutMs: Long = LOOKUP_TIMEOUT_MS
+    ): DocumentSnapshot? {
+        runCatching { db.enableNetwork() }
+        try {
+            return withTimeout(timeoutMs) { get(Source.DEFAULT).await() }
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "Firestore Source.DEFAULT timed out for $path; retrying Source.SERVER", e)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (!isOfflineOrUnavailableError(e)) throw e
+            Log.w(TAG, "Firestore Source.DEFAULT offline/unavailable for $path; retrying Source.SERVER", e)
+        }
+
+        // Kick network again and attempt a bounded server read before falling back gracefully
+        runCatching { withTimeoutOrNull(1_500L) { db.enableNetwork().await() } }
+        return try {
+            withTimeout(timeoutMs) { get(Source.SERVER).await() }
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "Firestore Source.SERVER timed out for $path; proceeding with offline fallback", e)
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (isOfflineOrUnavailableError(e)) {
+                Log.w(TAG, "Firestore Source.SERVER offline/unavailable for $path; proceeding with offline fallback", e)
+                null
+            } else {
+                throw e
+            }
+        }
+    }
+
     suspend fun checkUsernameAvailable(username: String): Result<Boolean> {
         val cleanLower = sanitizeUsername(username)
         if (cleanLower.length < 3) {
@@ -98,13 +147,23 @@ class SocialRepository(
         }
         val path = "usernames/$cleanLower"
         return try {
-            val snap = db.collection("usernames").document(cleanLower).get().await()
-            Result.success(!snap.exists())
+            val snap = db.collection("usernames").document(cleanLower).getWithOnlineFallback()
+            if (snap == null) {
+                // Client offline or server unreachable: allow Sign Up OTP to proceed safely
+                Result.success(true)
+            } else {
+                Result.success(!snap.exists())
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.GET, path)
-            Result.failure(e)
+            if (isOfflineOrUnavailableError(e)) {
+                Log.w(TAG, "Skipping offline username availability block for $path", e)
+                Result.success(true)
+            } else {
+                handleFirestoreError(e, OperationType.GET, path)
+                Result.failure(e)
+            }
         }
     }
 
@@ -113,13 +172,23 @@ class SocialRepository(
             ?: return Result.failure(IllegalArgumentException("Enter a valid 10-digit Indian mobile number."))
         val path = "phoneRegistry/$digits"
         return try {
-            val snap = db.collection("phoneRegistry").document(digits).get().await()
-            Result.success(!snap.exists())
+            val snap = db.collection("phoneRegistry").document(digits).getWithOnlineFallback()
+            if (snap == null) {
+                // Client offline or server unreachable: allow Sign Up OTP to proceed safely
+                Result.success(true)
+            } else {
+                Result.success(!snap.exists())
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.GET, path)
-            Result.failure(e)
+            if (isOfflineOrUnavailableError(e)) {
+                Log.w(TAG, "Skipping offline phone availability block for $path", e)
+                Result.success(true)
+            } else {
+                handleFirestoreError(e, OperationType.GET, path)
+                Result.failure(e)
+            }
         }
     }
 
@@ -131,7 +200,8 @@ class SocialRepository(
         return try {
             val usernameLower = if (digits10 != null) {
                 opPath = "phoneRegistry/$digits10"
-                val phoneSnap = db.collection("phoneRegistry").document(digits10).get().await()
+                val phoneSnap = db.collection("phoneRegistry").document(digits10).getWithOnlineFallback()
+                    ?: return Result.failure(IllegalStateException("Firestore client is offline."))
                 if (!phoneSnap.exists()) return Result.success(null)
                 phoneSnap.getString("usernameLower").orEmpty()
             } else {
@@ -139,7 +209,8 @@ class SocialRepository(
             }
             if (usernameLower.length < 2) return Result.success(null)
             opPath = "usernames/$usernameLower"
-            val userSnap = db.collection("usernames").document(usernameLower).get().await()
+            val userSnap = db.collection("usernames").document(usernameLower).getWithOnlineFallback()
+                ?: return Result.failure(IllegalStateException("Firestore client is offline."))
             if (!userSnap.exists()) return Result.success(null)
             val record = AuthLookupRecord(
                 userId = userSnap.getString("userId").orEmpty(),
@@ -169,6 +240,7 @@ class SocialRepository(
         var opType = OperationType.GET
         var opPath = "phoneRegistry/$phoneDigits10"
         return try {
+            runCatching { db.enableNetwork() }
             val cleanUsername = sanitizeUsername(username)
             require(cleanUsername.length >= 3) { "Username must be at least 3 valid characters." }
             val cleanFullName = fullName.trim().take(60)
@@ -181,8 +253,8 @@ class SocialRepository(
                 ?: PhoneFormatUtils.toIndianE164(digits10)
 
             val phoneDocRef = db.collection("phoneRegistry").document(digits10)
-            val existingPhone = phoneDocRef.get().await()
-            if (existingPhone.exists() && existingPhone.getString("userId") != uid) {
+            val existingPhone = phoneDocRef.getWithOnlineFallback()
+            if (existingPhone != null && existingPhone.exists() && existingPhone.getString("userId") != uid) {
                 return Result.failure(
                     IllegalStateException("This mobile number is already registered. Please log in instead.")
                 )
@@ -190,8 +262,8 @@ class SocialRepository(
 
             opPath = "usernames/$cleanUsername"
             val unameDocRef = db.collection("usernames").document(cleanUsername)
-            val existingUname = unameDocRef.get().await()
-            if (existingUname.exists() && existingUname.getString("userId") != uid) {
+            val existingUname = unameDocRef.getWithOnlineFallback()
+            if (existingUname != null && existingUname.exists() && existingUname.getString("userId") != uid) {
                 return Result.failure(
                     IllegalStateException("That username is already taken. Please pick another username.")
                 )
@@ -199,10 +271,10 @@ class SocialRepository(
 
             val userDocRef = db.collection("users").document(uid)
             opPath = userDocRef.path
-            val userSnap = userDocRef.get().await()
-            if (!userSnap.exists()) {
+            val userSnap = userDocRef.getWithOnlineFallback()
+            if (userSnap == null || !userSnap.exists()) {
                 opType = OperationType.CREATE
-                userDocRef.set(
+                val userTask = userDocRef.set(
                     mapOf(
                         "uid" to uid,
                         "userId" to uid,
@@ -234,11 +306,13 @@ class SocialRepository(
                         "verificationStatus" to "none",
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                    ),
+                    SetOptions.merge()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { userTask.await() }
             } else {
                 opType = OperationType.UPDATE
-                userDocRef.update(
+                val updateTask = userDocRef.update(
                     mapOf(
                         "uid" to uid,
                         "fullName" to cleanFullName,
@@ -249,16 +323,17 @@ class SocialRepository(
                         "online" to true,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
-                ).await()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { updateTask.await() }
             }
 
             val profileDocRef = db.collection("profiles").document(uid)
             opType = OperationType.GET
             opPath = profileDocRef.path
-            val profileSnap = profileDocRef.get().await()
-            if (!profileSnap.exists()) {
+            val profileSnap = profileDocRef.getWithOnlineFallback()
+            if (profileSnap == null || !profileSnap.exists()) {
                 opType = OperationType.CREATE
-                profileDocRef.set(
+                val profileTask = profileDocRef.set(
                     mapOf(
                         "userId" to uid,
                         "username" to cleanUsername,
@@ -280,11 +355,13 @@ class SocialRepository(
                         "online" to true,
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                    ),
+                    SetOptions.merge()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { profileTask.await() }
             } else {
                 opType = OperationType.UPDATE
-                profileDocRef.update(
+                val profileUpdateTask = profileDocRef.update(
                     mapOf(
                         "username" to cleanUsername,
                         "usernameLower" to cleanUsername,
@@ -293,16 +370,17 @@ class SocialRepository(
                         "online" to true,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
-                ).await()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { profileUpdateTask.await() }
             }
 
             val salt = PasswordHasher.generateSalt()
             val hash = PasswordHasher.hashPassword(password, salt)
 
             opPath = unameDocRef.path
-            if (!existingUname.exists()) {
+            if (existingUname == null || !existingUname.exists()) {
                 opType = OperationType.CREATE
-                unameDocRef.set(
+                val unameTask = unameDocRef.set(
                     mapOf(
                         "userId" to uid,
                         "usernameLower" to cleanUsername,
@@ -312,41 +390,49 @@ class SocialRepository(
                         "verified" to false,
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                    ),
+                    SetOptions.merge()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { unameTask.await() }
             } else {
                 opType = OperationType.UPDATE
-                unameDocRef.update(
+                val unameUpdateTask = unameDocRef.update(
                     mapOf(
                         "phoneE164" to phoneE164,
                         "passwordSalt" to salt,
                         "passwordHash" to hash,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
-                ).await()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { unameUpdateTask.await() }
             }
 
             opPath = phoneDocRef.path
-            if (!existingPhone.exists()) {
+            if (existingPhone == null || !existingPhone.exists()) {
                 opType = OperationType.CREATE
-                phoneDocRef.set(
+                val phoneTask = phoneDocRef.set(
                     mapOf(
                         "userId" to uid,
                         "phoneDigits" to digits10,
                         "phoneE164" to phoneE164,
                         "usernameLower" to cleanUsername,
                         "createdAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                    ),
+                    SetOptions.merge()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { phoneTask.await() }
             } else {
                 opType = OperationType.UPDATE
-                phoneDocRef.update(mapOf("usernameLower" to cleanUsername)).await()
+                val phoneUpdateTask = phoneDocRef.update(mapOf("usernameLower" to cleanUsername))
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { phoneUpdateTask.await() }
             }
 
             runCatching {
-                user.updateProfile(
-                    UserProfileChangeRequest.Builder().setDisplayName(cleanFullName).build()
-                ).await()
+                withTimeoutOrNull(2_000L) {
+                    user.updateProfile(
+                        UserProfileChangeRequest.Builder().setDisplayName(cleanFullName).build()
+                    ).await()
+                }
             }
 
             Result.success(
@@ -368,9 +454,34 @@ class SocialRepository(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "completePhoneRegistration failed at $opPath", e)
-            handleFirestoreError(e, opType, opPath)
-            Result.failure(e)
+            if (isOfflineOrUnavailableError(e)) {
+                Log.w(TAG, "completePhoneRegistration queued offline at $opPath", e)
+                val cleanUsername = sanitizeUsername(username).ifBlank { "star_${uid.take(6).lowercase()}" }
+                val cleanFullName = fullName.trim().ifBlank { "Star Creator" }.take(60)
+                val digits10 = PhoneFormatUtils.normalizeIndianPhoneDigits(phoneDigits10).orEmpty()
+                val phoneE164 = user.phoneNumber?.takeIf { it.isNotBlank() }
+                    ?: digits10.takeIf { it.length == 10 }?.let { PhoneFormatUtils.toIndianE164(it) }.orEmpty()
+                Result.success(
+                    UserProfile(
+                        id = uid,
+                        uid = uid,
+                        userId = uid,
+                        username = cleanUsername,
+                        usernameLower = cleanUsername,
+                        fullName = cleanFullName,
+                        mobile = phoneE164,
+                        bio = "Capturing moments on Star Max ✨",
+                        visibility = "public",
+                        isVerified = false,
+                        verified = false,
+                        online = true
+                    )
+                )
+            } else {
+                Log.w(TAG, "completePhoneRegistration failed at $opPath", e)
+                handleFirestoreError(e, opType, opPath)
+                Result.failure(e)
+            }
         }
     }
 
@@ -419,8 +530,8 @@ class SocialRepository(
             val phone = user.phoneNumber.orEmpty()
 
             val userDocRef = db.collection("users").document(uid)
-            val userSnap = userDocRef.get().await()
-            if (!userSnap.exists()) {
+            val userSnap = userDocRef.getWithOnlineFallback()
+            if (userSnap == null || !userSnap.exists()) {
                 opType = OperationType.CREATE
                 opPath = userDocRef.path
                 val payload = mutableMapOf<String, Any>(
@@ -457,7 +568,8 @@ class SocialRepository(
                 if (phone.isNotBlank()) {
                     payload["phoneE164"] = phone
                 }
-                userDocRef.set(payload).await()
+                val task = userDocRef.set(payload, SetOptions.merge())
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { task.await() }
             } else {
                 opType = OperationType.UPDATE
                 opPath = userDocRef.path
@@ -474,16 +586,17 @@ class SocialRepository(
                 if (phone.isNotBlank() && userSnap.getString("phoneE164").isNullOrBlank()) {
                     userUpdates["phoneE164"] = phone
                 }
-                userDocRef.update(userUpdates).await()
+                val task = userDocRef.update(userUpdates)
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { task.await() }
             }
 
             val profileDocRef = db.collection("profiles").document(uid)
             opType = OperationType.GET
             opPath = profileDocRef.path
-            val profileSnap = profileDocRef.get().await()
-            if (!profileSnap.exists()) {
-                val effectiveUsername = userSnap.getString("username")?.takeIf { it.isNotBlank() } ?: baseHandle
-                val effectiveFullName = userSnap.getString("fullName")?.takeIf { it.isNotBlank() } ?: rawName.take(60)
+            val profileSnap = profileDocRef.getWithOnlineFallback()
+            if (profileSnap == null || !profileSnap.exists()) {
+                val effectiveUsername = userSnap?.getString("username")?.takeIf { it.isNotBlank() } ?: baseHandle
+                val effectiveFullName = userSnap?.getString("fullName")?.takeIf { it.isNotBlank() } ?: rawName.take(60)
                 val profilePayload = mutableMapOf<String, Any>(
                     "userId" to uid,
                     "username" to effectiveUsername,
@@ -508,24 +621,31 @@ class SocialRepository(
                 )
                 opType = OperationType.CREATE
                 opPath = profileDocRef.path
-                profileDocRef.set(profilePayload).await()
+                val task = profileDocRef.set(profilePayload, SetOptions.merge())
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { task.await() }
             } else {
                 opType = OperationType.UPDATE
                 opPath = profileDocRef.path
-                profileDocRef.update(
+                val task = profileDocRef.update(
                     mapOf(
                         "online" to true,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
-                ).await()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { task.await() }
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "ensureUserProfile failed at $opPath", e)
-            handleFirestoreError(e, opType, opPath)
-            Result.failure(e)
+            if (isOfflineOrUnavailableError(e)) {
+                Log.w(TAG, "ensureUserProfile queued offline at $opPath", e)
+                Result.success(Unit)
+            } else {
+                Log.w(TAG, "ensureUserProfile failed at $opPath", e)
+                handleFirestoreError(e, opType, opPath)
+                Result.failure(e)
+            }
         }
     }
 
@@ -1739,6 +1859,29 @@ class SocialRepository(
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)
+        }
+    }
+
+    companion object {
+        fun isOfflineOrUnavailableError(error: Throwable?): Boolean {
+            if (error == null) return false
+            val chain = generateSequence(error) { it.cause }.toList()
+            return chain.any { t ->
+                if (t is TimeoutCancellationException) return@any true
+                if (t is FirebaseFirestoreException) {
+                    if (t.code == FirebaseFirestoreException.Code.UNAVAILABLE ||
+                        t.code == FirebaseFirestoreException.Code.DEADLINE_EXCEEDED
+                    ) {
+                        return@any true
+                    }
+                }
+                val msg = t.message?.lowercase().orEmpty()
+                msg.contains("offline") ||
+                    msg.contains("unavailable") ||
+                    msg.contains("failed to get document") ||
+                    msg.contains("unable to resolve host") ||
+                    msg.contains("network error")
+            }
         }
     }
 }
