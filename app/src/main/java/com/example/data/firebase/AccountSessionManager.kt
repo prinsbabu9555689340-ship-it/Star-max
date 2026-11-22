@@ -473,6 +473,7 @@ class AccountSessionManager(context: Context) {
             slotName = obj.optString("slotName"),
             username = obj.optString("username"),
             fullName = obj.optString("fullName"),
+            email = obj.optString("email"),
             bio = obj.optString("bio"),
             website = obj.optString("website"),
             avatarData = obj.optString("avatarData"),
@@ -485,7 +486,7 @@ class AccountSessionManager(context: Context) {
             verificationKnownAs = obj.optString("verificationKnownAs"),
             verificationLink = obj.optString("verificationLink"),
             verificationIdProofData = obj.optString("verificationIdProofData"),
-            authProvider = obj.optString("authProvider", "phone")
+            authProvider = obj.optString("authProvider", "email")
         )
     }
 
@@ -495,6 +496,7 @@ class AccountSessionManager(context: Context) {
             put("slotName", rec.slotName)
             put("username", rec.username)
             put("fullName", rec.fullName)
+            put("email", rec.email)
             put("bio", rec.bio)
             put("website", rec.website)
             put("avatarData", rec.avatarData.take(250_000))

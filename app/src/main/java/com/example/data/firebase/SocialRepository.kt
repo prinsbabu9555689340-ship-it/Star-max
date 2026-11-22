@@ -485,6 +485,219 @@ class SocialRepository(
         }
     }
 
+    suspend fun completeEmailRegistration(
+        user: FirebaseUser,
+        fullName: String,
+        username: String,
+        mobileNumber: String
+    ): Result<UserProfile> {
+        val uid = user.uid
+        var opType = OperationType.GET
+        var opPath = "users/$uid"
+        return try {
+            require(user.isEmailVerified) {
+                "Please verify your email address before completing registration."
+            }
+            runCatching { db.enableNetwork() }
+
+            val cleanUsername = sanitizeUsername(username)
+                .ifBlank { "star_${uid.take(6).lowercase()}" }
+                .let { if (it.length < 3) "${it}_star" else it }
+                .take(30)
+            val cleanFullName = fullName.trim()
+                .ifBlank { user.displayName?.trim().orEmpty() }
+                .ifBlank { "Star Creator" }
+                .take(60)
+            val normalizedDigits = PhoneFormatUtils.normalizeIndianPhoneDigits(mobileNumber)
+            val formattedMobile = when {
+                normalizedDigits != null -> PhoneFormatUtils.toIndianE164(normalizedDigits)
+                else -> mobileNumber.trim().take(20)
+            }
+            val avatarUrl = user.photoUrl?.toString()?.takeIf { it.length <= 350000 }.orEmpty()
+
+            val userDocRef = db.collection("users").document(uid)
+            opPath = userDocRef.path
+            val userSnap = userDocRef.getWithOnlineFallback()
+            if (userSnap == null || !userSnap.exists()) {
+                opType = OperationType.CREATE
+                val userPayload = mutableMapOf<String, Any>(
+                    "uid" to uid,
+                    "userId" to uid,
+                    "fullName" to cleanFullName,
+                    "username" to cleanUsername,
+                    "usernameLower" to cleanUsername,
+                    "mobile" to formattedMobile,
+                    "isVerified" to false,
+                    "verified" to false,
+                    "profilePic" to avatarUrl,
+                    "avatarData" to avatarUrl,
+                    "avatarTint" to "#E1306C",
+                    "bio" to "Capturing moments on Star Max ✨",
+                    "website" to "",
+                    "visibility" to "public",
+                    "isPrivate" to false,
+                    "postsCount" to 0L,
+                    "followersCount" to 0L,
+                    "followingCount" to 0L,
+                    "online" to true,
+                    "themeMode" to ThemeMode.SYSTEM.wireValue,
+                    "notifyLikes" to true,
+                    "notifyComments" to true,
+                    "notifyFollowers" to true,
+                    "notifyMessages" to true,
+                    "dailyUsageSeconds" to 0L,
+                    "usageDate" to ThemePreferences.todayDateKey(),
+                    "verificationStatus" to "none",
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (formattedMobile.isNotBlank()) {
+                    userPayload["phoneE164"] = formattedMobile
+                }
+                val task = userDocRef.set(userPayload, SetOptions.merge())
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { task.await() }
+            } else {
+                opType = OperationType.UPDATE
+                val updates = mutableMapOf<String, Any>(
+                    "uid" to uid,
+                    "fullName" to cleanFullName,
+                    "username" to cleanUsername,
+                    "usernameLower" to cleanUsername,
+                    "mobile" to formattedMobile,
+                    "online" to true,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (formattedMobile.isNotBlank()) {
+                    updates["phoneE164"] = formattedMobile
+                }
+                val task = userDocRef.update(updates)
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { task.await() }
+            }
+
+            val profileDocRef = db.collection("profiles").document(uid)
+            opType = OperationType.GET
+            opPath = profileDocRef.path
+            val profileSnap = profileDocRef.getWithOnlineFallback()
+            if (profileSnap == null || !profileSnap.exists()) {
+                opType = OperationType.CREATE
+                val profileTask = profileDocRef.set(
+                    mapOf(
+                        "userId" to uid,
+                        "username" to cleanUsername,
+                        "usernameLower" to cleanUsername,
+                        "fullName" to cleanFullName,
+                        "mobile" to formattedMobile,
+                        "bio" to "Capturing moments on Star Max ✨",
+                        "website" to "",
+                        "avatarData" to avatarUrl,
+                        "profilePic" to avatarUrl,
+                        "avatarTint" to "#E1306C",
+                        "visibility" to "public",
+                        "isPrivate" to false,
+                        "postsCount" to 0L,
+                        "followersCount" to 0L,
+                        "followingCount" to 0L,
+                        "isVerified" to false,
+                        "verified" to false,
+                        "online" to true,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    SetOptions.merge()
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { profileTask.await() }
+            } else {
+                opType = OperationType.UPDATE
+                val profileUpdateTask = profileDocRef.update(
+                    mapOf(
+                        "username" to cleanUsername,
+                        "usernameLower" to cleanUsername,
+                        "fullName" to cleanFullName,
+                        "mobile" to formattedMobile,
+                        "online" to true,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { profileUpdateTask.await() }
+            }
+
+            runCatching {
+                withTimeoutOrNull(2_000L) {
+                    user.updateProfile(
+                        UserProfileChangeRequest.Builder().setDisplayName(cleanFullName).build()
+                    ).await()
+                }
+            }
+
+            Result.success(
+                UserProfile(
+                    id = uid,
+                    uid = uid,
+                    userId = uid,
+                    username = cleanUsername,
+                    usernameLower = cleanUsername,
+                    fullName = cleanFullName,
+                    mobile = formattedMobile,
+                    profilePic = avatarUrl,
+                    avatarData = avatarUrl,
+                    bio = "Capturing moments on Star Max ✨",
+                    visibility = "public",
+                    isVerified = false,
+                    verified = false,
+                    online = true
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (isOfflineOrUnavailableError(e)) {
+                Log.w(TAG, "completeEmailRegistration queued offline at $opPath", e)
+                val cleanUsername = sanitizeUsername(username)
+                    .ifBlank { "star_${uid.take(6).lowercase()}" }
+                    .let { if (it.length < 3) "${it}_star" else it }
+                    .take(30)
+                val cleanFullName = fullName.trim().ifBlank { "Star Creator" }.take(60)
+                val normalizedDigits = PhoneFormatUtils.normalizeIndianPhoneDigits(mobileNumber)
+                val formattedMobile = normalizedDigits?.let { PhoneFormatUtils.toIndianE164(it) }
+                    ?: mobileNumber.trim().take(20)
+                Result.success(
+                    UserProfile(
+                        id = uid,
+                        uid = uid,
+                        userId = uid,
+                        username = cleanUsername,
+                        usernameLower = cleanUsername,
+                        fullName = cleanFullName,
+                        mobile = formattedMobile,
+                        bio = "Capturing moments on Star Max ✨",
+                        visibility = "public",
+                        isVerified = false,
+                        verified = false,
+                        online = true
+                    )
+                )
+            } else {
+                Log.w(TAG, "completeEmailRegistration failed at $opPath", e)
+                handleFirestoreError(e, opType, opPath)
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun fetchUserProfile(uid: String): UserProfile? {
+        if (uid.isBlank()) return null
+        return try {
+            val snap = db.collection("users").document(uid).getWithOnlineFallback() ?: return null
+            if (!snap.exists()) return null
+            snap.toObject(UserProfile::class.java)?.let(::normalizeProfile)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchUserProfile skipped for users/$uid", e)
+            null
+        }
+    }
+
     suspend fun updateRegisteredPassword(
         usernameLower: String,
         newPassword: String

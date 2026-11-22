@@ -8,4 +8,9 @@
     <string name="crash_screen_retry">Try Again</string>
     <string name="crash_screen_copy">Copy Error Details</string>
     <string name="crash_screen_copied">Error details copied</string>
+    <string name="verify_email_title">Verify Your Email</string>
+    <string name="verify_email_instructions">Open your Gmail or Email inbox and tap the verification link we just sent you. Check Spam or Promotions if you do not see it.</string>
+    <string name="verify_email_continue">I\u2019ve Verified \u2014 Continue</string>
+    <string name="verify_email_resend">Resend Email</string>
+    <string name="verify_email_back">Use a different email</string>
 </resources>

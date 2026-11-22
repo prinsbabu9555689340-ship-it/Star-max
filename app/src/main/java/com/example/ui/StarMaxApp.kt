@@ -185,7 +185,10 @@ fun AppNavigation(authOverride: FirebaseAuth? = null) {
                 )
 
                 val signedInUser = currentUser
-                if (signedInUser != null && signedInUser.uid == activeRecord.uid) {
+                val requiresEmailVerification = signedInUser != null &&
+                    signedInUser.providerData.any { it.providerId == "password" } &&
+                    !signedInUser.isEmailVerified
+                if (signedInUser != null && signedInUser.uid == activeRecord.uid && !requiresEmailVerification) {
                     key(signedInUser.uid) {
                         StarMaxAuthenticatedShell(
                             currentUserId = signedInUser.uid,
@@ -221,8 +224,8 @@ fun AppNavigation(authOverride: FirebaseAuth? = null) {
                         )
                     }
                 } else {
-                    // Force real Firebase Auth session rather than any local offline fallback
-                    LaunchedEffect(activeRecord.uid) {
+                    // Force verified Firebase Auth session before entering Home Feed
+                    LaunchedEffect(activeRecord.uid, requiresEmailVerification) {
                         sessionManager.setActiveUid(null)
                     }
                     AuthScreen(

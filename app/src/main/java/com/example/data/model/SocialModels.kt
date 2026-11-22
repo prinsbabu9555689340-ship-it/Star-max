@@ -76,6 +76,7 @@ data class SavedAccountRecord(
     val slotName: String = "",
     val username: String = "",
     val fullName: String = "",
+    val email: String = "",
     val bio: String = "",
     val website: String = "",
     val avatarData: String = "",
@@ -88,7 +89,7 @@ data class SavedAccountRecord(
     val verificationKnownAs: String = "",
     val verificationLink: String = "",
     val verificationIdProofData: String = "",
-    val authProvider: String = "phone"
+    val authProvider: String = "email"
 )
 
 @Keep

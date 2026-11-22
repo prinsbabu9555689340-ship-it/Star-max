@@ -272,4 +272,32 @@ class ExampleRobolectricTest {
     assertFalse(SocialRepository.isOfflineOrUnavailableError(permissionErr))
     assertFalse(SocialRepository.isOfflineOrUnavailableError(null))
   }
+
+  @Test
+  fun `email account record persists email address and verify email strings exist`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    assertEquals("Verify Your Email", context.getString(R.string.verify_email_title))
+    assertEquals("Resend Email", context.getString(R.string.verify_email_resend))
+
+    val manager = AccountSessionManager(context)
+    val record = SavedAccountRecord(
+      uid = "email_uid_123",
+      slotName = manager.allocateSlotForAccount(),
+      username = "priya_star",
+      fullName = "Priya Verma",
+      email = "priya@example.com",
+      phoneE164 = "+919876543210",
+      verified = false,
+      authProvider = "email"
+    )
+    manager.saveAccount(record, makeActive = true)
+
+    val reloaded = AccountSessionManager(context)
+    assertEquals("email_uid_123", reloaded.activeUid.value)
+    val saved = reloaded.savedAccounts.value.firstOrNull { it.uid == "email_uid_123" }
+    assertNotNull(saved)
+    assertEquals("priya@example.com", saved?.email)
+    assertEquals("email", saved?.authProvider)
+    assertEquals("+919876543210", saved?.phoneE164)
+  }
 }
